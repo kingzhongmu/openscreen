@@ -129,6 +129,7 @@ interface VideoPlaybackProps {
 	onSelectAnnotation?: (id: string | null) => void;
 	onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
 	onAnnotationSizeChange?: (id: string, size: { width: number; height: number }) => void;
+	onAnnotationImageScaleModeChange?: (id: string, mode: "contain" | "fill") => void;
 	blurRegions?: AnnotationRegion[];
 	selectedBlurId?: string | null;
 	onSelectBlur?: (id: string | null) => void;
@@ -256,6 +257,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			onSelectAnnotation,
 			onAnnotationPositionChange,
 			onAnnotationSizeChange,
+			onAnnotationImageScaleModeChange,
 			blurRegions = [],
 			selectedBlurId,
 			onSelectBlur,
@@ -2085,6 +2087,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 											item.kind === "blur"
 												? onBlurSizeChange?.(id, size)
 												: onAnnotationSizeChange?.(id, size)
+										}
+										onImageScaleModeChange={
+											item.kind === "annotation"
+												? (id, mode) => onAnnotationImageScaleModeChange?.(id, mode)
+												: undefined
 										}
 										onBlurDataChange={
 											item.kind === "blur"

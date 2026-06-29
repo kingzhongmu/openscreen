@@ -10,31 +10,72 @@ const SOURCE_DIR = path.join(ROOT, "electron", "native", "wgc-capture");
 const BUILD_DIR = path.join(SOURCE_DIR, "build");
 const COMPAT_LIB_DIR = path.join(BUILD_DIR, "compat-libs");
 const BIN_DIR = path.join(ROOT, "electron", "native", "bin", "win32-x64");
-const CMAKE = process.env.CMAKE_EXE ?? "cmake";
+
+function resolveVcVarsAll(candidate) {
+	if (!candidate) return null;
+	if (fs.existsSync(candidate) && candidate.toLowerCase().endsWith(".bat")) {
+		return candidate;
+	}
+	const asFile = path.join(candidate, "vcvarsall.bat");
+	if (fs.existsSync(asFile)) {
+		return asFile;
+	}
+	return null;
+}
 
 function findVcVarsAll() {
-	const explicit = process.env.VCVARSALL;
-	if (explicit && fs.existsSync(explicit)) {
-		return explicit;
+	for (const candidate of [process.env.VCVARSALL, process.env.VSINSTALLDIR]) {
+		const resolved = resolveVcVarsAll(candidate);
+		if (resolved) {
+			return resolved;
+		}
 	}
 
 	const roots = [
-		process.env.VSINSTALLDIR,
+		"D:\\software_install\\VisualStudio",
 		"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community",
 		"C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional",
 		"C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise",
 		"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools",
 		"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\Community",
+		"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools",
+		"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community",
+		"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional",
+		"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise",
 	];
 
-	for (const root of roots.filter(Boolean)) {
-		const candidate = path.join(root, "VC", "Auxiliary", "Build", "vcvarsall.bat");
-		if (fs.existsSync(candidate)) {
-			return candidate;
+	for (const root of roots) {
+		const resolved = resolveVcVarsAll(path.join(root, "VC", "Auxiliary", "Build"));
+		if (resolved) {
+			return resolved;
 		}
 	}
 
 	return null;
+}
+
+function findCmakeExe(vcvarsAll) {
+	if (process.env.CMAKE_EXE) {
+		return process.env.CMAKE_EXE;
+	}
+
+	const vsRoot = path.resolve(path.dirname(vcvarsAll), "..", "..", "..");
+	const bundled = path.join(
+		vsRoot,
+		"Common7",
+		"IDE",
+		"CommonExtensions",
+		"Microsoft",
+		"CMake",
+		"CMake",
+		"bin",
+		"cmake.exe",
+	);
+	if (fs.existsSync(bundled)) {
+		return bundled;
+	}
+
+	return "cmake";
 }
 
 function findWindowsSdkUmLibDir() {
@@ -109,12 +150,24 @@ if (process.platform !== "win32") {
 	process.exit(0);
 }
 
+const vcvarsAll = findVcVarsAll();
+if (!vcvarsAll) {
+	throw new Error(
+		"Could not find Visual Studio vcvarsall.bat. Install Visual Studio Build Tools with C++.",
+	);
+}
+
+const cmakeExe = findCmakeExe(vcvarsAll);
+console.log(`Using vcvarsall: ${vcvarsAll}`);
+console.log(`Using cmake: ${cmakeExe}`);
+
+fs.rmSync(BUILD_DIR, { recursive: true, force: true });
 fs.mkdirSync(BUILD_DIR, { recursive: true });
 
 await runInVsEnv(
-	`"${CMAKE}" -S "${SOURCE_DIR}" -B "${BUILD_DIR}" -G Ninja -DCMAKE_BUILD_TYPE=Release`,
+	`"${cmakeExe}" -S "${SOURCE_DIR}" -B "${BUILD_DIR}" -G Ninja -DCMAKE_BUILD_TYPE=Release`,
 );
-await runInVsEnv(`"${CMAKE}" --build "${BUILD_DIR}" --config Release`);
+await runInVsEnv(`"${cmakeExe}" --build "${BUILD_DIR}" --config Release`);
 
 const outputPath = path.join(BUILD_DIR, "wgc-capture.exe");
 if (!fs.existsSync(outputPath)) {

@@ -1640,6 +1640,17 @@ export default function VideoEditor() {
 		[pushState],
 	);
 
+	const handleAnnotationImageScaleModeChange = useCallback(
+		(id: string, mode: "contain" | "fill") => {
+			pushState((prev) => ({
+				annotationRegions: prev.annotationRegions.map((region) =>
+					region.id === id ? { ...region, imageScaleMode: mode } : region,
+				),
+			}));
+		},
+		[pushState],
+	);
+
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const mod = e.ctrlKey || e.metaKey;
@@ -2627,6 +2638,7 @@ export default function VideoEditor() {
 													onSelectAnnotation={handleSelectAnnotation}
 													onAnnotationPositionChange={handleAnnotationPositionChange}
 													onAnnotationSizeChange={handleAnnotationSizeChange}
+													onAnnotationImageScaleModeChange={handleAnnotationImageScaleModeChange}
 													blurRegions={blurRegions}
 													selectedBlurId={selectedBlurId}
 													onSelectBlur={handleSelectBlur}

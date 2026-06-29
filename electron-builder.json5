@@ -88,6 +88,8 @@
     "target": [
       "nsis"
     ],
+    // Local/unsigned builds: skip winCodeSign (7z extract needs symlink privilege on Windows).
+    "signAndEditExecutable": false,
     "icon": "icons/icons/win/icon.ico",
     "extraResources": [
       {

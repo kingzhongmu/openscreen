@@ -44,6 +44,7 @@ interface AnnotationOverlayProps {
 	containerHeight: number;
 	onPositionChange: (id: string, position: { x: number; y: number }) => void;
 	onSizeChange: (id: string, size: { width: number; height: number }) => void;
+	onImageScaleModeChange?: (id: string, mode: "contain" | "fill") => void;
 	onBlurDataChange?: (id: string, blurData: BlurData) => void;
 	onBlurDataCommit?: () => void;
 	onClick: (id: string) => void;
@@ -61,6 +62,7 @@ export function AnnotationOverlay({
 	containerHeight,
 	onPositionChange,
 	onSizeChange,
+	onImageScaleModeChange,
 	onBlurDataChange,
 	onBlurDataCommit,
 	onClick,
@@ -78,6 +80,8 @@ export function AnnotationOverlay({
 	const isSelectedFreehandBlur = isSelected && blurShape === "freehand";
 	const isDraggingRef = useRef(false);
 	const isDrawingFreehandRef = useRef(false);
+	const [isImageResizing, setIsImageResizing] = useState(false);
+	const [resizeStretchImage, setResizeStretchImage] = useState(false);
 	const freehandPointsRef = useRef<Array<{ x: number; y: number }>>([]);
 	const [isFreehandDrawing, setIsFreehandDrawing] = useState(false);
 	const [draftFreehandPoints, setDraftFreehandPoints] = useState<Array<{ x: number; y: number }>>(
@@ -105,6 +109,14 @@ export function AnnotationOverlay({
 			height: committedHeight,
 		});
 	}, [committedHeight, committedWidth, committedX, committedY]);
+
+	const persistedImageScaleMode = annotation.imageScaleMode ?? "contain";
+	const imageScaleMode =
+		annotation.type === "image" && isImageResizing
+			? resizeStretchImage
+				? "fill"
+				: "contain"
+			: persistedImageScaleMode;
 
 	const { x, y, width, height } = liveRect;
 
@@ -341,7 +353,10 @@ export function AnnotationOverlay({
 						<img
 							src={annotation.content}
 							alt="Annotation"
-							className="w-full h-full object-contain"
+							className={cn(
+								"w-full h-full",
+								imageScaleMode === "fill" ? "object-fill" : "object-contain",
+							)}
 							draggable={false}
 						/>
 					);
@@ -542,7 +557,15 @@ export function AnnotationOverlay({
 					isDraggingRef.current = false;
 				}, 100);
 			}}
-			onResize={(_e, _direction, ref, _delta, position) => {
+			onResizeStart={(e) => {
+				if (annotation.type !== "image") return;
+				setIsImageResizing(true);
+				setResizeStretchImage(e.ctrlKey || e.metaKey);
+			}}
+			onResize={(e, _direction, ref, _delta, position) => {
+				if (annotation.type === "image") {
+					setResizeStretchImage(e.ctrlKey || e.metaKey);
+				}
 				setLiveRect({
 					x: position.x,
 					y: position.y,
@@ -550,7 +573,14 @@ export function AnnotationOverlay({
 					height: ref.offsetHeight,
 				});
 			}}
-			onResizeStop={(_e, _direction, ref, _delta, position) => {
+			onResizeStop={(e, _direction, ref, _delta, position) => {
+				if (annotation.type === "image") {
+					setIsImageResizing(false);
+					const nextMode = e.ctrlKey || e.metaKey ? "fill" : "contain";
+					if (persistedImageScaleMode !== nextMode) {
+						onImageScaleModeChange?.(annotation.id, nextMode);
+					}
+				}
 				setLiveRect({
 					x: position.x,
 					y: position.y,

@@ -409,6 +409,12 @@ async function renderImage(
 	return new Promise((resolve) => {
 		const img = new Image();
 		img.onload = () => {
+			if (annotation.imageScaleMode === "fill") {
+				ctx.drawImage(img, x, y, width, height);
+				resolve();
+				return;
+			}
+
 			// Contain within bounds, preserving aspect ratio
 			const imgAspect = img.width / img.height;
 			const boxAspect = width / height;

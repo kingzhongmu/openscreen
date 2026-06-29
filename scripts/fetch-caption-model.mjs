@@ -2,7 +2,7 @@
 // instead of fetching the Whisper model from HuggingFace and the onnxruntime wasm from a CDN.
 //
 //   caption-assets/
-//     models/Xenova/whisper-tiny/...   ← downloaded from HuggingFace (config + quantized ONNX)
+//     models/Xenova/whisper-tiny/...   ← HuggingFace or ModelScope (see CAPTION_MODEL_MIRROR)
 //     ort/ort-wasm*.wasm               ← copied from @xenova/transformers/dist
 //
 // Idempotent: existing non-empty files are left alone, so re-runs and CI cache hits are no-ops.
@@ -19,6 +19,17 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "caption-assets");
 const MODEL_ID = "Xenova/whisper-tiny";
 const HF_BASE = `https://huggingface.co/${MODEL_ID}/resolve/main`;
+const MS_BASE = `https://modelscope.cn/api/v1/models/${MODEL_ID}/repo?Revision=master&FilePath=`;
+
+/** @typedef {"huggingface" | "modelscope"} CaptionModelMirror */
+
+/**
+ * Which host to pull Whisper assets from.
+ * - huggingface: HuggingFace Hub only
+ * - modelscope: ModelScope (魔搭) only — https://www.modelscope.cn/models/Xenova/whisper-tiny
+ * - auto (default): try ModelScope first, then HuggingFace
+ */
+const CAPTION_MODEL_MIRROR = (process.env.CAPTION_MODEL_MIRROR ?? "auto").toLowerCase();
 
 // Small config/tokenizer/preprocessor files plus the quantized ONNX the ASR pipeline loads by
 // default (encoder + merged decoder). Grab every metadata file so transformers never requests
@@ -99,19 +110,22 @@ async function fetchWithRetry(url) {
 	throw lastErr;
 }
 
-async function download(url, dest) {
-	if (await exists(dest)) {
-		console.log(`  ✓ cached  ${path.relative(OUT, dest)}`);
-		return;
+/** @returns {CaptionModelMirror[]} */
+function mirrorOrder() {
+	if (CAPTION_MODEL_MIRROR === "modelscope") return ["modelscope"];
+	if (CAPTION_MODEL_MIRROR === "huggingface") return ["huggingface"];
+	if (CAPTION_MODEL_MIRROR === "auto") return ["modelscope", "huggingface"];
+	throw new Error(
+		`Invalid CAPTION_MODEL_MIRROR="${process.env.CAPTION_MODEL_MIRROR}". Use modelscope, huggingface, or auto.`,
+	);
+}
+
+/** @param {CaptionModelMirror} mirror @param {string} rel */
+function modelFileUrl(mirror, rel) {
+	if (mirror === "modelscope") {
+		return `${MS_BASE}${encodeURIComponent(rel)}`;
 	}
-	await mkdir(path.dirname(dest), { recursive: true });
-	const res = await fetchWithRetry(url);
-	const tmp = `${dest}.partial`;
-	await pipeline(Readable.fromWeb(res.body), createWriteStream(tmp));
-	const { rename } = await import("node:fs/promises");
-	await rename(tmp, dest);
-	const mb = ((await stat(dest)).size / 1_000_000).toFixed(1);
-	console.log(`  ↓ ${path.relative(OUT, dest)} (${mb} MB)`);
+	return `${HF_BASE}/${rel}`;
 }
 
 async function copyOrtWasm() {
@@ -136,14 +150,52 @@ async function copyOrtWasm() {
 	}
 }
 
+async function downloadModelFile(rel, dest) {
+	if (await exists(dest)) {
+		console.log(`  ✓ cached  ${path.relative(OUT, dest)}`);
+		return;
+	}
+
+	const mirrors = mirrorOrder();
+	let lastErr;
+	for (const mirror of mirrors) {
+		const url = modelFileUrl(mirror, rel);
+		try {
+			await mkdir(path.dirname(dest), { recursive: true });
+			const res = await fetchWithRetry(url);
+			const tmp = `${dest}.partial`;
+			await pipeline(Readable.fromWeb(res.body), createWriteStream(tmp));
+			const { rename } = await import("node:fs/promises");
+			await rename(tmp, dest);
+			const mb = ((await stat(dest)).size / 1_000_000).toFixed(1);
+			const label = mirror === "modelscope" ? "ModelScope" : "HuggingFace";
+			console.log(`  ↓ ${path.relative(OUT, dest)} (${mb} MB, ${label})`);
+			return;
+		} catch (err) {
+			lastErr = err;
+			console.log(
+				`  … ${mirror} failed for ${rel}: ${err instanceof Error ? err.message : err}`,
+			);
+		}
+	}
+	throw lastErr ?? new Error(`Failed to download ${rel}`);
+}
+
 async function main() {
-	console.log(`Fetching caption assets → ${path.relative(ROOT, OUT)}/`);
+	const mirrors = mirrorOrder();
+	const mirrorLabel =
+		mirrors.length === 1
+			? mirrors[0] === "modelscope"
+				? "ModelScope"
+				: "HuggingFace"
+			: "ModelScope → HuggingFace";
+	console.log(`Fetching caption assets → ${path.relative(ROOT, OUT)}/ (${mirrorLabel})`);
 	console.log("ONNX Runtime wasm:");
 	await copyOrtWasm();
 	console.log(`Whisper model (${MODEL_ID}):`);
 	const modelDir = path.join(OUT, "models", ...MODEL_ID.split("/"));
 	for (const rel of MODEL_FILES) {
-		await download(`${HF_BASE}/${rel}`, path.join(modelDir, rel));
+		await downloadModelFile(rel, path.join(modelDir, rel));
 	}
 	console.log("Caption assets ready.");
 }

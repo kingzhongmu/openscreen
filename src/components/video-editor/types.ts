@@ -292,6 +292,8 @@ export interface AnnotationRegion {
 	content: string; // Legacy - still used for current type
 	textContent?: string; // Separate storage for text
 	imageContent?: string; // Separate storage for image data URL
+	/** How the image fills its box: contain (default) or fill after Ctrl+resize. */
+	imageScaleMode?: "contain" | "fill";
 	position: AnnotationPosition;
 	size: AnnotationSize;
 	style: AnnotationTextStyle;
