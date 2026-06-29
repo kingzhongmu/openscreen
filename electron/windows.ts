@@ -17,11 +17,129 @@ const ASSET_BASE_DIR = process.defaultApp
 const ASSET_BASE_URL_ARG = `--asset-base-url=${pathToFileURL(`${ASSET_BASE_DIR}${path.sep}`).toString()}`;
 
 let hudOverlayWindow: BrowserWindow | null = null;
+let hudSettingsWindow: BrowserWindow | null = null;
+
+export type HudSettingsAnchor = {
+	anchorCenterX?: number;
+	anchorTopY?: number;
+	gap?: number;
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+};
+
+const DEFAULT_HUD_SETTINGS_WIDTH = 288;
+const DEFAULT_HUD_SETTINGS_HEIGHT = 420;
+const MIN_HUD_SETTINGS_WIDTH = 240;
+const MIN_HUD_SETTINGS_HEIGHT = 280;
+const MAX_HUD_SETTINGS_WIDTH = 480;
+const MAX_HUD_SETTINGS_HEIGHT = 600;
+
+function clampHudSettingsSize(width: number, height: number) {
+	return {
+		width: Math.max(MIN_HUD_SETTINGS_WIDTH, Math.min(MAX_HUD_SETTINGS_WIDTH, Math.round(width))),
+		height: Math.max(
+			MIN_HUD_SETTINGS_HEIGHT,
+			Math.min(MAX_HUD_SETTINGS_HEIGHT, Math.round(height)),
+		),
+	};
+}
+
+function notifyHudSettingsClosed() {
+	if (hudOverlayWindow && !hudOverlayWindow.isDestroyed()) {
+		hudOverlayWindow.webContents.send("hud-settings-closed");
+	}
+}
+
+function positionHudSettingsWindow(
+	win: BrowserWindow,
+	placement: HudSettingsAnchor,
+	size: { width: number; height: number },
+) {
+	const { width, height } = clampHudSettingsSize(size.width, size.height);
+
+	if (Number.isFinite(placement.x) && Number.isFinite(placement.y)) {
+		const { workArea } = screen.getDisplayNearestPoint({
+			x: placement.x as number,
+			y: placement.y as number,
+		});
+		const clamped = clampHudOverlayToWorkArea(
+			{
+				x: Math.round(placement.x as number),
+				y: Math.round(placement.y as number),
+				width,
+				height,
+			},
+			workArea,
+		);
+		win.setBounds(clamped);
+		return;
+	}
+
+	if (!Number.isFinite(placement.anchorCenterX) || !Number.isFinite(placement.anchorTopY)) {
+		return;
+	}
+
+	const anchor = {
+		anchorCenterX: placement.anchorCenterX as number,
+		anchorTopY: placement.anchorTopY as number,
+		gap: Number.isFinite(placement.gap) ? Math.max(0, placement.gap ?? 8) : 8,
+	};
+	const { workArea } = screen.getDisplayNearestPoint({
+		x: anchor.anchorCenterX,
+		y: anchor.anchorTopY,
+	});
+	const clamped = clampHudOverlayToWorkArea(
+		{
+			x: Math.round(anchor.anchorCenterX - width / 2),
+			y: Math.round(anchor.anchorTopY - anchor.gap - height),
+			width,
+			height,
+		},
+		workArea,
+	);
+	win.setBounds(clamped);
+}
+
+export function getHudSettingsWindow(): BrowserWindow | null {
+	if (hudSettingsWindow && !hudSettingsWindow.isDestroyed()) {
+		return hudSettingsWindow;
+	}
+	return null;
+}
+
+export function closeHudSettingsWindow() {
+	if (hudSettingsWindow && !hudSettingsWindow.isDestroyed()) {
+		hudSettingsWindow.close();
+		return;
+	}
+	hudSettingsWindow = null;
+	notifyHudSettingsClosed();
+}
+
+function clampHudOverlayToWorkArea(
+	bounds: Electron.Rectangle,
+	workArea: Electron.Rectangle,
+): Electron.Rectangle {
+	const width = Math.min(Math.max(1, bounds.width), workArea.width);
+	const height = Math.min(Math.max(1, bounds.height), workArea.height);
+	const x = Math.max(workArea.x, Math.min(bounds.x, workArea.x + workArea.width - width));
+	const y = Math.max(workArea.y, Math.min(bounds.y, workArea.y + workArea.height - height));
+
+	return {
+		x: Math.round(x),
+		y: Math.round(y),
+		width: Math.round(width),
+		height: Math.round(height),
+	};
+}
 
 ipcMain.on("hud-overlay-hide", () => {
 	if (hudOverlayWindow && !hudOverlayWindow.isDestroyed()) {
 		hudOverlayWindow.minimize();
 	}
+	closeHudSettingsWindow();
 });
 
 ipcMain.on("hud-overlay-ignore-mouse-events", (_event, ignore: boolean) => {
@@ -40,8 +158,18 @@ ipcMain.on("hud-overlay-move-by", (_event, deltaX: number, deltaY: number) => {
 		return;
 	}
 
-	const [x, y] = hudOverlayWindow.getPosition();
-	hudOverlayWindow.setPosition(Math.round(x + deltaX), Math.round(y + deltaY), false);
+	const bounds = hudOverlayWindow.getBounds();
+	const { workArea } = screen.getDisplayMatching(bounds);
+	const clamped = clampHudOverlayToWorkArea(
+		{
+			x: bounds.x + deltaX,
+			y: bounds.y + deltaY,
+			width: bounds.width,
+			height: bounds.height,
+		},
+		workArea,
+	);
+	hudOverlayWindow.setPosition(clamped.x, clamped.y, false);
 });
 
 // Resize the HUD to fit its rendered content. Anchored by its bottom-centre so it
@@ -65,20 +193,125 @@ ipcMain.on("hud-overlay-set-size", (_event, width: number, height: number) => {
 	const nextWidth = Math.min(workArea.width, Math.max(1, Math.round(width)));
 	const nextHeight = Math.min(workArea.height, Math.max(1, Math.round(height)));
 
-	if (bounds.width === nextWidth && bounds.height === nextHeight) {
-		return;
-	}
-
 	const centerX = bounds.x + bounds.width / 2;
 	const bottomY = bounds.y + bounds.height;
 
-	hudOverlayWindow.setBounds({
-		x: Math.round(centerX - nextWidth / 2),
-		y: Math.round(bottomY - nextHeight),
-		width: nextWidth,
-		height: nextHeight,
-	});
+	const clamped = clampHudOverlayToWorkArea(
+		{
+			x: Math.round(centerX - nextWidth / 2),
+			y: Math.round(bottomY - nextHeight),
+			width: nextWidth,
+			height: nextHeight,
+		},
+		workArea,
+	);
+
+	if (
+		bounds.x === clamped.x &&
+		bounds.y === clamped.y &&
+		bounds.width === clamped.width &&
+		bounds.height === clamped.height
+	) {
+		return;
+	}
+
+	hudOverlayWindow.setBounds(clamped);
 });
+
+ipcMain.handle("hud-settings-toggle", async (_, anchor: HudSettingsAnchor) => {
+	const existing = getHudSettingsWindow();
+	if (existing?.isVisible()) {
+		closeHudSettingsWindow();
+		return { opened: false };
+	}
+
+	if (!anchor) {
+		return { opened: false };
+	}
+
+	const hasSavedPosition = Number.isFinite(anchor.x) && Number.isFinite(anchor.y);
+	const hasHudAnchor = Number.isFinite(anchor.anchorCenterX) && Number.isFinite(anchor.anchorTopY);
+	if (!hasSavedPosition && !hasHudAnchor) {
+		return { opened: false };
+	}
+
+	let win = getHudSettingsWindow();
+	if (!win) {
+		win = createHudSettingsWindow();
+	}
+
+	if (win.webContents.isLoading()) {
+		await new Promise<void>((resolve) => {
+			win?.once("ready-to-show", resolve);
+		});
+	}
+
+	positionHudSettingsWindow(win, anchor, {
+		width: Number.isFinite(anchor.width) ? anchor.width : DEFAULT_HUD_SETTINGS_WIDTH,
+		height: Number.isFinite(anchor.height) ? anchor.height : DEFAULT_HUD_SETTINGS_HEIGHT,
+	});
+
+	if (!win.isVisible()) {
+		win.show();
+	}
+	win.focus();
+
+	return { opened: true };
+});
+
+ipcMain.on("hud-settings-close", () => {
+	closeHudSettingsWindow();
+});
+
+ipcMain.on("hud-settings-move-by", (_event, deltaX: number, deltaY: number) => {
+	const win = getHudSettingsWindow();
+	if (!win || !Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+		return;
+	}
+
+	const bounds = win.getBounds();
+	const { workArea } = screen.getDisplayMatching(bounds);
+	const clamped = clampHudOverlayToWorkArea(
+		{
+			x: bounds.x + deltaX,
+			y: bounds.y + deltaY,
+			width: bounds.width,
+			height: bounds.height,
+		},
+		workArea,
+	);
+	win.setPosition(clamped.x, clamped.y, false);
+});
+
+ipcMain.on("hud-settings-set-size", (_, width: number, height: number) => {
+	const win = getHudSettingsWindow();
+	if (!win || !Number.isFinite(width) || !Number.isFinite(height)) {
+		return;
+	}
+
+	const bounds = win.getBounds();
+	const { width: nextWidth, height: nextHeight } = clampHudSettingsSize(width, height);
+	const { workArea } = screen.getDisplayMatching(bounds);
+	const clamped = clampHudOverlayToWorkArea(
+		{
+			x: bounds.x,
+			y: bounds.y,
+			width: nextWidth,
+			height: nextHeight,
+		},
+		workArea,
+	);
+	win.setBounds(clamped);
+});
+
+ipcMain.on(
+	"hud-settings-sync",
+	(_event, payload: { trayLayout?: "horizontal" | "vertical"; locale?: string }) => {
+		if (hudOverlayWindow && !hudOverlayWindow.isDestroyed()) {
+			hudOverlayWindow.webContents.send("hud-settings-sync", payload);
+		}
+	},
+);
 
 /**
  * Frameless transparent HUD overlay, always-on-top, centred at the bottom of the
@@ -148,6 +381,7 @@ export function createHudOverlayWindow(): BrowserWindow {
 		if (hudOverlayWindow === win) {
 			hudOverlayWindow = null;
 		}
+		closeHudSettingsWindow();
 	});
 
 	if (VITE_DEV_SERVER_URL) {
@@ -155,6 +389,61 @@ export function createHudOverlayWindow(): BrowserWindow {
 	} else {
 		win.loadFile(path.join(RENDERER_DIST, "index.html"), {
 			query: { windowType: "hud-overlay" },
+		});
+	}
+
+	return win;
+}
+
+/**
+ * Frameless HUD settings panel as its own window. Position is controlled by the main
+ * process so it stays anchored above the HUD bar and follows HUD drags.
+ */
+export function createHudSettingsWindow(): BrowserWindow {
+	const win = new BrowserWindow({
+		width: DEFAULT_HUD_SETTINGS_WIDTH,
+		height: DEFAULT_HUD_SETTINGS_HEIGHT,
+		frame: false,
+		transparent: true,
+		backgroundColor: "#00000000",
+		roundedCorners: false,
+		resizable: false,
+		movable: false,
+		alwaysOnTop: true,
+		skipTaskbar: true,
+		hasShadow: false,
+		show: false,
+		webPreferences: {
+			preload: path.join(__dirname, "preload.mjs"),
+			additionalArguments: [ASSET_BASE_URL_ARG],
+			nodeIntegration: false,
+			contextIsolation: true,
+			backgroundThrottling: false,
+		},
+	});
+
+	if (process.platform === "darwin") {
+		win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+	}
+
+	win.once("ready-to-show", () => {
+		if (!HEADLESS) win.show();
+	});
+
+	win.on("closed", () => {
+		if (hudSettingsWindow === win) {
+			hudSettingsWindow = null;
+			notifyHudSettingsClosed();
+		}
+	});
+
+	hudSettingsWindow = win;
+
+	if (VITE_DEV_SERVER_URL) {
+		win.loadURL(`${VITE_DEV_SERVER_URL}?windowType=hud-settings`);
+	} else {
+		win.loadFile(path.join(RENDERER_DIST, "index.html"), {
+			query: { windowType: "hud-settings" },
 		});
 	}
 

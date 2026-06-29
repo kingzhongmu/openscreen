@@ -13,6 +13,7 @@ import {
 } from "@/lib/nativeWindowsRecording";
 import type { CursorCaptureMode, RecordedVideoAssetInput } from "@/lib/recordingSession";
 import { requestCameraAccess } from "@/lib/requestCameraAccess";
+import { loadUserPreferences } from "@/lib/userPreferences";
 import { createRecorderHandle, type RecorderHandle } from "./recorderHandle";
 
 const TARGET_FRAME_RATE = 60;
@@ -825,6 +826,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			if (webcamEnabled && !browserWebcamRecorder) {
 				stopWebcamPreviewStream();
 			}
+			const recordingPrefs = loadUserPreferences();
 			const request: NativeWindowsRecordingRequest = {
 				recordingId: activeRecordingId,
 				source: {
@@ -859,6 +861,10 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				},
 				cursor: {
 					mode: cursorCaptureMode,
+				},
+				capture: {
+					excludeTaskbar: recordingPrefs.excludeTaskbarWhenRecordingDisplay,
+					windowPadding: recordingPrefs.windowCapturePadding,
 				},
 			};
 			const result = await window.electronAPI.startNativeWindowsRecording(request);

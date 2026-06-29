@@ -9,7 +9,8 @@
 		"openVideoFile": "Mở tệp video",
 		"openProject": "Mở dự án",
 		"useVerticalTray": "Dùng khay dọc",
-		"useHorizontalTray": "Dùng khay ngang"
+		"useHorizontalTray": "Dùng khay ngang",
+		"openRecordingSettings": "Settings"
 	},
 	"audio": {
 		"enableSystemAudio": "Bật âm thanh hệ thống",
@@ -45,5 +46,31 @@
 	"cursor": {
 		"useEditableCursor": "Dùng con trỏ có thể chỉnh sửa",
 		"useSystemCursor": "Dùng con trỏ hệ thống"
+	},
+	"recordingSettings": {
+		"title": "Settings",
+		"trayLayout": {
+			"label": "Vertical tray",
+			"description": "Stack HUD controls vertically instead of horizontally."
+		},
+		"language": {
+			"label": "Language"
+		},
+		"captureSection": "Capture",
+		"excludeTaskbar": {
+			"label": "Exclude taskbar",
+			"description": "When recording a display, capture only the work area without the taskbar."
+		},
+		"windowPadding": {
+			"label": "Window capture padding",
+			"description": "Extra pixels to include around a selected window on all four sides.",
+			"unit": "px",
+			"top": "Top",
+			"right": "Right",
+			"bottom": "Bottom",
+			"left": "Left"
+		},
+		"nativeOnlyHint": "These options apply to native Windows capture.",
+		"close": "Close settings"
 	}
 }

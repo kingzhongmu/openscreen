@@ -81,3 +81,239 @@
 	background: rgba(52, 178, 123, 0.14);
 	color: #ffffff;
 }
+
+.settingsMenuPanel {
+	position: fixed;
+	right: 0;
+	top: 0;
+	width: 18rem;
+	padding: 0;
+	border-radius: 0.75rem;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	background: rgba(8, 9, 12, 0.96);
+	box-shadow: 0 18px 42px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+	backdrop-filter: blur(18px) saturate(140%);
+	pointer-events: auto;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.settingsMenuPanelAnchored {
+	left: 50%;
+	right: auto;
+	top: auto;
+	transform: translateX(-50%);
+	z-index: 40;
+	min-width: 240px;
+	min-height: 280px;
+	max-width: min(480px, calc(100vw - 2rem));
+	max-height: min(600px, calc(100vh - 6rem));
+}
+
+.settingsWindowRoot {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: 0.75rem;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	background: rgba(8, 9, 12, 0.96);
+	box-shadow: 0 18px 42px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+	backdrop-filter: blur(18px) saturate(140%);
+	box-sizing: border-box;
+}
+
+.settingsMenuTitleBar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.625rem 0.75rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	flex-shrink: 0;
+	cursor: grab;
+	user-select: none;
+}
+
+.settingsMenuTitleBar:active {
+	cursor: grabbing;
+}
+
+.settingsMenuTitle {
+	font-size: 12px;
+	font-weight: 600;
+	color: rgba(255, 255, 255, 0.92);
+}
+
+.settingsMenuCloseBtn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.5rem;
+	height: 1.5rem;
+	border-radius: 0.375rem;
+	border: 0;
+	background: transparent;
+	color: rgba(255, 255, 255, 0.55);
+	cursor: pointer;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.settingsMenuCloseBtn:hover,
+.settingsMenuCloseBtn:focus-visible {
+	background: rgba(255, 255, 255, 0.1);
+	color: #ffffff;
+	outline: none;
+}
+
+.settingsMenuBody {
+	display: flex;
+	flex-direction: column;
+	gap: 0.875rem;
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 0.75rem;
+	padding-right: 0.875rem;
+}
+
+.settingsMenuSectionLabel {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: rgba(255, 255, 255, 0.38);
+	padding-top: 0.125rem;
+}
+
+.settingsMenuSelect {
+	width: 100%;
+	border-radius: 0.45rem;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	background: rgba(255, 255, 255, 0.04);
+	padding: 0.35rem 0.5rem;
+	font-size: 11px;
+	color: rgba(255, 255, 255, 0.92);
+	outline: none;
+	cursor: pointer;
+}
+
+.settingsMenuSelect:focus-visible {
+	border-color: rgba(52, 178, 123, 0.55);
+}
+
+.settingsMenuResizeHandle {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	width: 16px;
+	height: 16px;
+	cursor: nwse-resize;
+	touch-action: none;
+	background: linear-gradient(
+		135deg,
+		transparent 0 50%,
+		rgba(255, 255, 255, 0.18) 50% 58%,
+		transparent 58% 68%,
+		rgba(255, 255, 255, 0.18) 68% 76%,
+		transparent 76%
+	);
+}
+
+.settingsMenuResizeHandle:hover {
+	background: linear-gradient(
+		135deg,
+		transparent 0 50%,
+		rgba(255, 255, 255, 0.32) 50% 58%,
+		transparent 58% 68%,
+		rgba(255, 255, 255, 0.32) 68% 76%,
+		transparent 76%
+	);
+}
+
+.settingsMenuRow {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 0.75rem;
+}
+
+.settingsMenuField {
+	display: flex;
+	flex-direction: column;
+	gap: 0.375rem;
+}
+
+.settingsMenuCopy {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	min-width: 0;
+}
+
+.settingsMenuLabel {
+	font-size: 11px;
+	font-weight: 600;
+	color: rgba(255, 255, 255, 0.88);
+}
+
+.settingsMenuDescription {
+	font-size: 10px;
+	line-height: 1.45;
+	color: rgba(255, 255, 255, 0.48);
+}
+
+.settingsMenuInputRow {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.settingsMenuInput {
+	width: 5rem;
+	border-radius: 0.45rem;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	background: rgba(255, 255, 255, 0.04);
+	padding: 0.35rem 0.5rem;
+	font-size: 11px;
+	color: rgba(255, 255, 255, 0.92);
+	outline: none;
+}
+
+.settingsMenuInput:focus-visible {
+	border-color: rgba(52, 178, 123, 0.55);
+}
+
+.settingsMenuPaddingGrid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.5rem;
+}
+
+.settingsMenuPaddingCell {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.settingsMenuPaddingSideLabel {
+	font-size: 10px;
+	font-weight: 600;
+	color: rgba(255, 255, 255, 0.72);
+}
+
+.settingsMenuUnit {
+	font-size: 10px;
+	color: rgba(255, 255, 255, 0.55);
+}
+
+.settingsMenuHint {
+	font-size: 10px;
+	line-height: 1.4;
+	color: rgba(255, 255, 255, 0.38);
+}

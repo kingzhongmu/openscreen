@@ -36,6 +36,10 @@ export type NativeWindowsRecordingRequest = {
 	cursor: {
 		mode: import("./recordingSession").CursorCaptureMode;
 	};
+	capture?: {
+		excludeTaskbar?: boolean;
+		windowPadding?: import("./userPreferences").WindowCapturePadding;
+	};
 };
 
 export type NativeWindowsRecordingStartResult = {

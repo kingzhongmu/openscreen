@@ -9,7 +9,9 @@
 		"openVideoFile": "打开视频文件",
 		"openProject": "打开项目",
 		"useVerticalTray": "使用竖向托盘",
-		"useHorizontalTray": "使用横向托盘"
+		"useHorizontalTray": "使用横向托盘",
+		"openStudio": "打开工作室",
+		"openRecordingSettings": "设置"
 	},
 	"audio": {
 		"enableSystemAudio": "启用系统音频",
@@ -40,6 +42,32 @@
 		"selectSource": "请选择要录制的源"
 	},
 	"language": "语言",
+	"recordingSettings": {
+		"title": "设置",
+		"trayLayout": {
+			"label": "竖向托盘",
+			"description": "将 HUD 控件纵向排列，而非横向排列。"
+		},
+		"language": {
+			"label": "语言"
+		},
+		"captureSection": "录制捕获",
+		"excludeTaskbar": {
+			"label": "排除任务栏",
+			"description": "录制整个屏幕时，不包含任务栏区域。"
+		},
+		"windowPadding": {
+			"label": "窗口扩展边距",
+			"description": "录制程序窗口时，向各方向额外扩展的像素范围。",
+			"unit": "像素",
+			"top": "上",
+			"right": "右",
+			"bottom": "下",
+			"left": "左"
+		},
+		"nativeOnlyHint": "以上选项在 Windows 原生录制模式下生效。",
+		"close": "关闭设置"
+	},
 	"systemLanguagePrompt": {
 		"title": "使用系统语言吗？",
 		"description": "我们检测到你的系统语言是{{language}}。是否将 OpenScreen 切换为{{language}}？",

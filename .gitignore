@@ -62,6 +62,8 @@ result-*
 
 #others
 
+.trunk/
+
 **/*.import
 
 # Auto-caption model + ORT wasm — regenerated at build by scripts/fetch-caption-model.mjs

@@ -9,7 +9,8 @@
 		"openVideoFile": "Ouvrir un fichier vidéo",
 		"openProject": "Ouvrir un projet",
 		"useVerticalTray": "Utiliser la barre verticale",
-		"useHorizontalTray": "Utiliser la barre horizontale"
+		"useHorizontalTray": "Utiliser la barre horizontale",
+		"openRecordingSettings": "Settings"
 	},
 	"audio": {
 		"enableSystemAudio": "Activer l'audio système",
@@ -45,5 +46,31 @@
 		"description": "Nous avons détecté {{language}} comme langue système. Voulez-vous passer OpenScreen en {{language}} ?",
 		"switch": "Passer en {{language}}",
 		"keepDefault": "Conserver la langue actuelle"
+	},
+	"recordingSettings": {
+		"title": "Settings",
+		"trayLayout": {
+			"label": "Vertical tray",
+			"description": "Stack HUD controls vertically instead of horizontally."
+		},
+		"language": {
+			"label": "Language"
+		},
+		"captureSection": "Capture",
+		"excludeTaskbar": {
+			"label": "Exclude taskbar",
+			"description": "When recording a display, capture only the work area without the taskbar."
+		},
+		"windowPadding": {
+			"label": "Window capture padding",
+			"description": "Extra pixels to include around a selected window on all four sides.",
+			"unit": "px",
+			"top": "Top",
+			"right": "Right",
+			"bottom": "Bottom",
+			"left": "Left"
+		},
+		"nativeOnlyHint": "These options apply to native Windows capture.",
+		"close": "Close settings"
 	}
 }

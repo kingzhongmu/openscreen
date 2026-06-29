@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { CountdownOverlay } from "./components/launch/CountdownOverlay.tsx";
+import { HudSettingsWindow } from "./components/launch/HudSettingsWindow";
 import { LaunchWindow } from "./components/launch/LaunchWindow";
 import { SourceSelector } from "./components/launch/SourceSelector";
 import { Toaster } from "./components/ui/sonner";
@@ -27,7 +28,12 @@ export default function App() {
 			setWindowType(type);
 		}
 
-		if (type === "hud-overlay" || type === "source-selector" || type === "countdown-overlay") {
+		if (
+			type === "hud-overlay" ||
+			type === "source-selector" ||
+			type === "countdown-overlay" ||
+			type === "hud-settings"
+		) {
 			document.body.style.background = "transparent";
 			document.documentElement.style.background = "transparent";
 			document.getElementById("root")?.style.setProperty("background", "transparent");
@@ -36,6 +42,18 @@ export default function App() {
 		// HUD is a fixed-size BrowserWindow; pin the document shell and hide overflow
 		// so the renderer can't introduce scrollbars (see issue #305).
 		if (type === "hud-overlay") {
+			document.documentElement.style.height = "100%";
+			document.documentElement.style.overflow = "hidden";
+			document.body.style.height = "100%";
+			document.body.style.margin = "0";
+			document.body.style.overflow = "hidden";
+			const root = document.getElementById("root");
+			root?.style.setProperty("height", "100%");
+			root?.style.setProperty("min-height", "0");
+			root?.style.setProperty("overflow", "hidden");
+		}
+
+		if (type === "hud-settings") {
 			document.documentElement.style.height = "100%";
 			document.documentElement.style.overflow = "hidden";
 			document.body.style.height = "100%";
@@ -63,6 +81,8 @@ export default function App() {
 				return <SourceSelector />;
 			case "countdown-overlay":
 				return <CountdownOverlay />;
+			case "hud-settings":
+				return <HudSettingsWindow />;
 			case "editor":
 				return (
 					<ShortcutsProvider>

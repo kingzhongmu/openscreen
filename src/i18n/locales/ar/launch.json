@@ -9,7 +9,8 @@
 		"openVideoFile": "فتح ملف فيديو",
 		"openProject": "فتح مشروع",
 		"useVerticalTray": "استخدام الشريط العمودي",
-		"useHorizontalTray": "استخدام الشريط الأفقي"
+		"useHorizontalTray": "استخدام الشريط الأفقي",
+		"openRecordingSettings": "Settings"
 	},
 	"audio": {
 		"enableSystemAudio": "تفعيل صوت النظام",
@@ -45,5 +46,31 @@
 	"cursor": {
 		"useEditableCursor": "استخدام مؤشر قابل للتحرير",
 		"useSystemCursor": "استخدام مؤشر النظام"
+	},
+	"recordingSettings": {
+		"title": "Settings",
+		"trayLayout": {
+			"label": "Vertical tray",
+			"description": "Stack HUD controls vertically instead of horizontally."
+		},
+		"language": {
+			"label": "Language"
+		},
+		"captureSection": "Capture",
+		"excludeTaskbar": {
+			"label": "Exclude taskbar",
+			"description": "When recording a display, capture only the work area without the taskbar."
+		},
+		"windowPadding": {
+			"label": "Window capture padding",
+			"description": "Extra pixels to include around a selected window on all four sides.",
+			"unit": "px",
+			"top": "Top",
+			"right": "Right",
+			"bottom": "Bottom",
+			"left": "Left"
+		},
+		"nativeOnlyHint": "These options apply to native Windows capture.",
+		"close": "Close settings"
 	}
 }

@@ -32,6 +32,44 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	setHudOverlaySize: (width: number, height: number) => {
 		ipcRenderer.send("hud-overlay-set-size", width, height);
 	},
+	toggleHudSettings: (anchor: {
+		anchorCenterX?: number;
+		anchorTopY?: number;
+		gap?: number;
+		x?: number;
+		y?: number;
+		width?: number;
+		height?: number;
+	}) => {
+		return ipcRenderer.invoke("hud-settings-toggle", anchor) as Promise<{ opened: boolean }>;
+	},
+	moveHudSettingsBy: (deltaX: number, deltaY: number) => {
+		ipcRenderer.send("hud-settings-move-by", deltaX, deltaY);
+	},
+	closeHudSettings: () => {
+		ipcRenderer.send("hud-settings-close");
+	},
+	setHudSettingsSize: (width: number, height: number) => {
+		ipcRenderer.send("hud-settings-set-size", width, height);
+	},
+	notifyHudSettingsSync: (payload: { trayLayout?: "horizontal" | "vertical"; locale?: string }) => {
+		ipcRenderer.send("hud-settings-sync", payload);
+	},
+	onHudSettingsClosed: (callback: () => void) => {
+		const listener = () => callback();
+		ipcRenderer.on("hud-settings-closed", listener);
+		return () => ipcRenderer.removeListener("hud-settings-closed", listener);
+	},
+	onHudSettingsSync: (
+		callback: (payload: { trayLayout?: "horizontal" | "vertical"; locale?: string }) => void,
+	) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			payload: { trayLayout?: "horizontal" | "vertical"; locale?: string },
+		) => callback(payload);
+		ipcRenderer.on("hud-settings-sync", listener);
+		return () => ipcRenderer.removeListener("hud-settings-sync", listener);
+	},
 	getSources: async (opts: Electron.SourcesOptions) => {
 		return await ipcRenderer.invoke("get-sources", opts);
 	},

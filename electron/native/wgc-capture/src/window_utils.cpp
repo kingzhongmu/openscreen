@@ -50,6 +50,13 @@ RECT unionRect(const RECT& a, const RECT& b) {
 	return result;
 }
 
+void clampRectToMonitor(RECT& rect, const RECT& monitorRect) {
+	rect.left = std::max(rect.left, monitorRect.left);
+	rect.top = std::max(rect.top, monitorRect.top);
+	rect.right = std::min(rect.right, monitorRect.right);
+	rect.bottom = std::min(rect.bottom, monitorRect.bottom);
+}
+
 bool isSameWindow(HWND left, HWND right) {
 	return left != nullptr && right != nullptr && left == right;
 }
@@ -96,10 +103,21 @@ int evenDimension(int value) {
 	return (std::max(2, value) / 2) * 2;
 }
 
+void applyPadding(RECT& rect, const WindowCapturePadding& padding, const RECT& monitorRect) {
+	if (padding.top <= 0 && padding.right <= 0 && padding.bottom <= 0 && padding.left <= 0) {
+		return;
+	}
+
+	rect.left -= padding.left;
+	rect.top -= padding.top;
+	rect.right += padding.right;
+	rect.bottom += padding.bottom;
+	clampRectToMonitor(rect, monitorRect);
+}
+
 } // namespace
 
 void ensurePerMonitorDpiAwareness() {
-	// WGC monitor pixels and GetWindowRect must share the same coordinate space.
 	if (IsValidDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
 		SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 		return;
@@ -116,7 +134,7 @@ HMONITOR findMonitorForWindow(HWND window) {
 	return MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
 }
 
-bool computeWindowCaptureRect(HWND window, RECT& bounds) {
+bool computeWindowCaptureRect(HWND window, const WindowCapturePadding& padding, RECT& bounds) {
 	if (!window || !IsWindow(window) || IsIconic(window)) {
 		return false;
 	}
@@ -130,10 +148,23 @@ bool computeWindowCaptureRect(HWND window, RECT& bounds) {
 	context.unionRect = bounds;
 	EnumWindows(enumOwnedPopupWindows, reinterpret_cast<LPARAM>(&context));
 	bounds = context.unionRect;
+
+	const HMONITOR monitor = findMonitorForWindow(window);
+	if (!monitor) {
+		return false;
+	}
+
+	MONITORINFO monitorInfo{};
+	monitorInfo.cbSize = sizeof(monitorInfo);
+	if (!GetMonitorInfo(monitor, &monitorInfo)) {
+		return false;
+	}
+
+	applyPadding(bounds, padding, monitorInfo.rcMonitor);
 	return bounds.right > bounds.left && bounds.bottom > bounds.top;
 }
 
-bool initializeWindowCaptureState(HWND window, WindowCaptureState& state) {
+bool initializeWindowMonitorCrop(HWND window, const WindowCapturePadding& padding, MonitorCropState& state) {
 	state = {};
 	if (!window || !IsWindow(window)) {
 		return false;
@@ -142,7 +173,7 @@ bool initializeWindowCaptureState(HWND window, WindowCaptureState& state) {
 	ensurePerMonitorDpiAwareness();
 
 	RECT captureRect{};
-	if (!computeWindowCaptureRect(window, captureRect)) {
+	if (!computeWindowCaptureRect(window, padding, captureRect)) {
 		return false;
 	}
 
@@ -157,25 +188,58 @@ bool initializeWindowCaptureState(HWND window, WindowCaptureState& state) {
 		return false;
 	}
 
+	state.enabled = true;
 	state.window = window;
 	state.monitor = monitor;
 	state.monitorRect = monitorInfo.rcMonitor;
+	state.captureRect = captureRect;
+	state.padding = padding;
 	state.outputWidth = evenDimension(captureRect.right - captureRect.left);
 	state.outputHeight = evenDimension(captureRect.bottom - captureRect.top);
 	return state.outputWidth > 0 && state.outputHeight > 0;
 }
 
-bool computeMonitorRelativeCropBox(
-	const WindowCaptureState& state,
-	const D3D11_TEXTURE2D_DESC& monitorTextureDesc,
-	D3D11_BOX& srcBox) {
-	if (!state.window || !IsWindow(state.window) || state.outputWidth <= 0 || state.outputHeight <= 0) {
+bool initializeDisplayMonitorCrop(HMONITOR monitor, bool excludeTaskbar, MonitorCropState& state) {
+	state = {};
+	if (!monitor || !excludeTaskbar) {
 		return false;
 	}
 
-	RECT captureRect{};
-	if (!computeWindowCaptureRect(state.window, captureRect)) {
+	ensurePerMonitorDpiAwareness();
+
+	MONITORINFO monitorInfo{};
+	monitorInfo.cbSize = sizeof(monitorInfo);
+	if (!GetMonitorInfo(monitor, &monitorInfo)) {
 		return false;
+	}
+
+	const RECT captureRect = monitorInfo.rcWork;
+	if (captureRect.right <= captureRect.left || captureRect.bottom <= captureRect.top) {
+		return false;
+	}
+
+	state.enabled = true;
+	state.monitor = monitor;
+	state.monitorRect = monitorInfo.rcMonitor;
+	state.captureRect = captureRect;
+	state.outputWidth = evenDimension(captureRect.right - captureRect.left);
+	state.outputHeight = evenDimension(captureRect.bottom - captureRect.top);
+	return state.outputWidth > 0 && state.outputHeight > 0;
+}
+
+bool computeMonitorCropBox(
+	const MonitorCropState& state,
+	const D3D11_TEXTURE2D_DESC& monitorTextureDesc,
+	D3D11_BOX& srcBox) {
+	if (!state.enabled || state.outputWidth <= 0 || state.outputHeight <= 0) {
+		return false;
+	}
+
+	RECT captureRect = state.captureRect;
+	if (state.window) {
+		if (!computeWindowCaptureRect(state.window, state.padding, captureRect)) {
+			return false;
+		}
 	}
 
 	const LONG srcLeft = captureRect.left - state.monitorRect.left;

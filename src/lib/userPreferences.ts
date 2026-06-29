@@ -33,7 +33,49 @@ export interface UserPreferences {
 	projectFolder: string | null;
 	/** Recording HUD control layout */
 	trayLayout: "horizontal" | "vertical";
+	/** Exclude the taskbar area when recording a display (native capture) */
+	excludeTaskbarWhenRecordingDisplay: boolean;
+	/** Extra pixels to expand window capture per side (native capture) */
+	windowCapturePadding: WindowCapturePadding;
+	/** HUD settings panel dimensions (pixels) */
+	hudSettingsPanelSize: HudSettingsPanelSize;
+	/** Last screen position of the HUD settings window, if the user moved it */
+	hudSettingsPanelPosition: HudSettingsPanelPosition | null;
 }
+
+export type HudSettingsPanelPosition = {
+	x: number;
+	y: number;
+};
+
+export type HudSettingsPanelSize = {
+	width: number;
+	height: number;
+};
+
+export const DEFAULT_HUD_SETTINGS_PANEL_SIZE: HudSettingsPanelSize = {
+	width: 288,
+	height: 420,
+};
+
+export const MIN_HUD_SETTINGS_PANEL_WIDTH = 240;
+export const MIN_HUD_SETTINGS_PANEL_HEIGHT = 280;
+export const MAX_HUD_SETTINGS_PANEL_WIDTH = 480;
+export const MAX_HUD_SETTINGS_PANEL_HEIGHT = 600;
+
+export type WindowCapturePadding = {
+	top: number;
+	right: number;
+	bottom: number;
+	left: number;
+};
+
+export const DEFAULT_WINDOW_CAPTURE_PADDING: WindowCapturePadding = {
+	top: 0,
+	right: 0,
+	bottom: 0,
+	left: 0,
+};
 
 export const DEFAULT_PREFS: UserPreferences = {
 	padding: DEFAULT_EDITOR_LAYOUT_SETTINGS.padding,
@@ -43,7 +85,89 @@ export const DEFAULT_PREFS: UserPreferences = {
 	exportFolder: null,
 	projectFolder: null,
 	trayLayout: "horizontal",
+	excludeTaskbarWhenRecordingDisplay: false,
+	windowCapturePadding: { ...DEFAULT_WINDOW_CAPTURE_PADDING },
+	hudSettingsPanelSize: { ...DEFAULT_HUD_SETTINGS_PANEL_SIZE },
+	hudSettingsPanelPosition: null,
 };
+
+export const MAX_WINDOW_CAPTURE_PADDING_PX = 500;
+
+function clampWindowCapturePaddingValue(value: unknown): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return 0;
+	}
+	return Math.max(0, Math.min(MAX_WINDOW_CAPTURE_PADDING_PX, Math.round(value)));
+}
+
+function parseWindowCapturePadding(raw: Record<string, unknown>): WindowCapturePadding {
+	if (typeof raw.windowCapturePaddingPx === "number") {
+		const legacy = clampWindowCapturePaddingValue(raw.windowCapturePaddingPx);
+		return { top: legacy, right: legacy, bottom: legacy, left: legacy };
+	}
+
+	if (raw.windowCapturePadding && typeof raw.windowCapturePadding === "object") {
+		const padding = raw.windowCapturePadding as Record<string, unknown>;
+		return {
+			top: clampWindowCapturePaddingValue(padding.top),
+			right: clampWindowCapturePaddingValue(padding.right),
+			bottom: clampWindowCapturePaddingValue(padding.bottom),
+			left: clampWindowCapturePaddingValue(padding.left),
+		};
+	}
+
+	return { ...DEFAULT_WINDOW_CAPTURE_PADDING };
+}
+
+function clampHudSettingsPanelDimension(
+	value: unknown,
+	min: number,
+	max: number,
+	fallback: number,
+): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return fallback;
+	}
+	return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function parseHudSettingsPanelSize(raw: Record<string, unknown>): HudSettingsPanelSize {
+	if (raw.hudSettingsPanelSize && typeof raw.hudSettingsPanelSize === "object") {
+		const size = raw.hudSettingsPanelSize as Record<string, unknown>;
+		return {
+			width: clampHudSettingsPanelDimension(
+				size.width,
+				MIN_HUD_SETTINGS_PANEL_WIDTH,
+				MAX_HUD_SETTINGS_PANEL_WIDTH,
+				DEFAULT_HUD_SETTINGS_PANEL_SIZE.width,
+			),
+			height: clampHudSettingsPanelDimension(
+				size.height,
+				MIN_HUD_SETTINGS_PANEL_HEIGHT,
+				MAX_HUD_SETTINGS_PANEL_HEIGHT,
+				DEFAULT_HUD_SETTINGS_PANEL_SIZE.height,
+			),
+		};
+	}
+
+	return { ...DEFAULT_HUD_SETTINGS_PANEL_SIZE };
+}
+
+function parseHudSettingsPanelPosition(
+	raw: Record<string, unknown>,
+): HudSettingsPanelPosition | null {
+	if (!raw.hudSettingsPanelPosition || typeof raw.hudSettingsPanelPosition !== "object") {
+		return null;
+	}
+	const pos = raw.hudSettingsPanelPosition as Record<string, unknown>;
+	if (typeof pos.x !== "number" || typeof pos.y !== "number") {
+		return null;
+	}
+	if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) {
+		return null;
+	}
+	return { x: Math.round(pos.x), y: Math.round(pos.y) };
+}
 
 /** Parses stored preferences without throwing on malformed JSON. */
 function safeJsonParse(text: string | null): Record<string, unknown> | null {
@@ -99,6 +223,13 @@ export function loadUserPreferences(): UserPreferences {
 			raw.trayLayout === "horizontal" || raw.trayLayout === "vertical"
 				? raw.trayLayout
 				: DEFAULT_PREFS.trayLayout,
+		excludeTaskbarWhenRecordingDisplay:
+			typeof raw.excludeTaskbarWhenRecordingDisplay === "boolean"
+				? raw.excludeTaskbarWhenRecordingDisplay
+				: DEFAULT_PREFS.excludeTaskbarWhenRecordingDisplay,
+		windowCapturePadding: parseWindowCapturePadding(raw),
+		hudSettingsPanelSize: parseHudSettingsPanelSize(raw),
+		hudSettingsPanelPosition: parseHudSettingsPanelPosition(raw),
 	};
 }
 

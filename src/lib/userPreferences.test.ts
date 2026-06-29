@@ -103,4 +103,43 @@ describe("user preferences", () => {
 
 		expect(loadUserPreferences().trayLayout).toBe("horizontal");
 	});
+
+	it("persists recording capture preferences", () => {
+		saveUserPreferences({
+			excludeTaskbarWhenRecordingDisplay: true,
+			windowCapturePadding: { top: 12, right: 24, bottom: 36, left: 48 },
+		});
+
+		const prefs = loadUserPreferences();
+		expect(prefs.excludeTaskbarWhenRecordingDisplay).toBe(true);
+		expect(prefs.windowCapturePadding).toEqual({ top: 12, right: 24, bottom: 36, left: 48 });
+	});
+
+	it("migrates legacy single-side window capture padding", () => {
+		localStorage.setItem(
+			"openscreen_user_preferences",
+			JSON.stringify({ windowCapturePaddingPx: 20 }),
+		);
+
+		expect(loadUserPreferences().windowCapturePadding).toEqual({
+			top: 20,
+			right: 20,
+			bottom: 20,
+			left: 20,
+		});
+	});
+
+	it("clamps invalid window capture padding values", () => {
+		localStorage.setItem(
+			"openscreen_user_preferences",
+			JSON.stringify({ windowCapturePadding: { top: 9999, right: -5, bottom: "x", left: 10 } }),
+		);
+
+		expect(loadUserPreferences().windowCapturePadding).toEqual({
+			top: 500,
+			right: 0,
+			bottom: 0,
+			left: 10,
+		});
+	});
 });

@@ -1,10 +1,9 @@
-import { Check, ChevronDown, Clapperboard, Columns3, Languages, Rows3 } from "lucide-react";
+import { ChevronDown, Clapperboard } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { BsPauseCircle, BsPlayCircle, BsRecordCircle } from "react-icons/bs";
 import { FaRegStopCircle } from "react-icons/fa";
 import { FaFolderOpen } from "react-icons/fa6";
-import { FiMinus, FiX } from "react-icons/fi";
+import { FiMinus } from "react-icons/fi";
 import {
 	MdCancel,
 	MdMic,
@@ -20,8 +19,9 @@ import {
 } from "react-icons/md";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { useI18n, useScopedT } from "@/contexts/I18nContext";
-import { getAvailableLocales, getLocaleName } from "@/i18n/loader";
-import { loadUserPreferences, saveUserPreferences } from "@/lib/userPreferences";
+import type { Locale } from "@/i18n/config";
+import { getLocaleName } from "@/i18n/loader";
+import { loadUserPreferences } from "@/lib/userPreferences";
 import { nativeBridgeClient } from "@/native";
 import { useAudioLevelMeter } from "../../hooks/useAudioLevelMeter";
 import { useCameraDevices } from "../../hooks/useCameraDevices";
@@ -34,6 +34,7 @@ import { Button } from "../ui/button";
 import { Tooltip } from "../ui/tooltip";
 import styles from "./LaunchWindow.module.css";
 import { openSourceSelectorWithPermissionRetry } from "./openSourceSelectorFlow";
+import { RecordingSettingsMenu } from "./RecordingSettingsMenu";
 
 const ICON_SIZE = 20;
 
@@ -41,6 +42,7 @@ const ICON_SIZE = 20;
 const HUD_DEVICE_POPUP_GAP = 28;
 // Horizontal layout: mirrors the `bottom-[68px]` class on the popup element.
 const HUD_DEVICE_POPUP_HORIZONTAL_BOTTOM = 68;
+const HUD_LANGUAGE_PROMPT_TOP = 32;
 
 const ICON_CONFIG = {
 	drag: { icon: RxDragHandleDots2, size: ICON_SIZE },
@@ -61,7 +63,6 @@ const ICON_CONFIG = {
 	videoFile: { icon: MdVideoFile, size: ICON_SIZE },
 	folder: { icon: FaFolderOpen, size: ICON_SIZE },
 	minimize: { icon: FiMinus, size: ICON_SIZE },
-	close: { icon: FiX, size: ICON_SIZE },
 } as const;
 
 type IconName = keyof typeof ICON_CONFIG;
@@ -91,9 +92,7 @@ const hudSidebarVerticalClasses =
 /** Launches the floating recording HUD and its recorder controls. */
 export function LaunchWindow() {
 	const t = useScopedT("launch");
-	const availableLocales = getAvailableLocales();
 	const {
-		locale,
 		setLocale,
 		systemLocaleSuggestion,
 		acceptSystemLocaleSuggestion,
@@ -101,8 +100,6 @@ export function LaunchWindow() {
 		resolveSystemLocaleSuggestion,
 	} = useI18n();
 	const suggestedLanguageName = systemLocaleSuggestion ? getLocaleName(systemLocaleSuggestion) : "";
-	const activeLanguageLabel = getLocaleName(locale).split(/\s+/)[0] || locale.toUpperCase();
-
 	const {
 		recording,
 		paused,
@@ -138,26 +135,14 @@ export function LaunchWindow() {
 	const [isWebcamHovered, setIsWebcamHovered] = useState(false);
 	const [isWebcamFocused, setIsWebcamFocused] = useState(false);
 	const webcamExpanded = isWebcamHovered || isWebcamFocused;
-	const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
 	const [trayLayout, setTrayLayout] = useState<"horizontal" | "vertical">(
 		() => loadUserPreferences().trayLayout,
 	);
 	const [supportsCursorModeToggle, setSupportsCursorModeToggle] = useState(false);
-	const languageTriggerRef = useRef<HTMLButtonElement | null>(null);
-	const languageMenuPanelRef = useRef<HTMLDivElement | null>(null);
 	const hudBarRef = useRef<HTMLDivElement | null>(null);
 	const deviceSelectorRef = useRef<HTMLDivElement | null>(null);
 	// Measured bar height, anchors the popups above the tall vertical tray so they don't overlap it.
 	const [hudBarHeight, setHudBarHeight] = useState(0);
-	const [languageMenuStyle, setLanguageMenuStyle] = useState<{
-		right: number;
-		top: number;
-		maxHeight: number;
-	}>({
-		right: 12,
-		top: 12,
-		maxHeight: 240,
-	});
 
 	const {
 		devices: micDevices,
@@ -235,71 +220,6 @@ export function LaunchWindow() {
 		});
 	}, []);
 
-	useEffect(() => {
-		if (!isLanguageMenuOpen) return;
-
-		const handlePointerDown = (event: PointerEvent) => {
-			const target = event.target as Node;
-			const clickedTrigger = languageTriggerRef.current?.contains(target);
-			const clickedMenu = languageMenuPanelRef.current?.contains(target);
-			if (!clickedTrigger && !clickedMenu) {
-				setIsLanguageMenuOpen(false);
-			}
-		};
-
-		const handleEscape = (event: KeyboardEvent) => {
-			if (event.key === "Escape") {
-				setIsLanguageMenuOpen(false);
-			}
-		};
-
-		window.addEventListener("pointerdown", handlePointerDown);
-		window.addEventListener("keydown", handleEscape);
-
-		return () => {
-			window.removeEventListener("pointerdown", handlePointerDown);
-			window.removeEventListener("keydown", handleEscape);
-		};
-	}, [isLanguageMenuOpen]);
-
-	useEffect(() => {
-		if (!isLanguageMenuOpen || !languageTriggerRef.current) return;
-
-		const updatePosition = () => {
-			if (!languageTriggerRef.current) return;
-			const rect = languageTriggerRef.current.getBoundingClientRect();
-			const gap = 8;
-			const viewportPadding = 8;
-			const availableHeight = Math.max(80, rect.top - viewportPadding - gap);
-			const top = Math.max(viewportPadding, rect.top - gap - availableHeight);
-
-			setLanguageMenuStyle({
-				right: Math.max(viewportPadding, window.innerWidth - rect.right),
-				top,
-				maxHeight: availableHeight,
-			});
-		};
-
-		updatePosition();
-		window.addEventListener("resize", updatePosition);
-		window.addEventListener("scroll", updatePosition, true);
-
-		return () => {
-			window.removeEventListener("resize", updatePosition);
-			window.removeEventListener("scroll", updatePosition, true);
-		};
-	}, [isLanguageMenuOpen]);
-
-	useEffect(() => {
-		if (!isLanguageMenuOpen || !languageMenuPanelRef.current) return;
-		const id = requestAnimationFrame(() => {
-			if (languageMenuPanelRef.current) {
-				languageMenuPanelRef.current.scrollTop = 0;
-			}
-		});
-		return () => cancelAnimationFrame(id);
-	}, [isLanguageMenuOpen]);
-
 	// Resize the overlay window to fit content, else the taller vertical tray gets clipped
 	// and scrolls. Measure from the window's bottom-centre (the anchor the main process
 	// preserves) so fixed bottom/centre offsets keep this stable and it doesn't oscillate.
@@ -308,44 +228,35 @@ export function LaunchWindow() {
 		const barEl = hudBarRef.current;
 		if (!barEl || !window.electronAPI?.setHudOverlaySize) return;
 
-		// Breathing room so the drop shadow isn't clipped. TOP_MARGIN must also exceed the
-		// slack in the bar's `max-h: calc(100vh - 2.5rem)` cap (40px reserved - 20px bottom
-		// gap = 20px) so the window stays tall enough that the cap never engages and adds a scrollbar.
 		const SIDE_MARGIN = 24;
 		const TOP_MARGIN = 24;
-		// Wide enough that the language menu (11rem) never clips, even when the bar is narrow.
 		const MIN_WIDTH = 220;
 
 		const viewportHeight = window.innerHeight;
-		const centerX = window.innerWidth / 2;
 
-		// Use natural (scroll) size, not the clipped box: vertical mode's max-h cap is a
-		// small-screen fallback, and reading clipped height would pin the window to it.
-		// scrollHeight gives full content height; the cap only engages when the main process clamps to screen.
 		let topFromBottom = viewportHeight - barEl.getBoundingClientRect().bottom + barEl.scrollHeight;
 		let halfWidth = barEl.scrollWidth / 2;
 
-		// Popups drive both dimensions too. Their vertical anchor depends on bar height,
-		// which is fed back through React state and lags by a frame, so derive their top
-		// edge from the bar's natural height instead of the stale rendered position. Keeps
-		// one measurement pass authoritative and avoids a feedback re-measure.
+		const popupBottomOffset =
+			trayLayout === "vertical"
+				? barEl.scrollHeight + HUD_DEVICE_POPUP_GAP
+				: HUD_DEVICE_POPUP_HORIZONTAL_BOTTOM;
+
+		// Only measure in-flow popups from the DOM. Floating menus use fixed dimensions
+		// below so window resize does not feed back into getBoundingClientRect().
 		if (deviceSelectorRef.current) {
 			const rect = deviceSelectorRef.current.getBoundingClientRect();
-			if (rect.width !== 0 || rect.height !== 0) {
-				const popupBottomOffset =
-					trayLayout === "vertical"
-						? barEl.scrollHeight + HUD_DEVICE_POPUP_GAP
-						: HUD_DEVICE_POPUP_HORIZONTAL_BOTTOM;
+			if (rect.width > 0 || rect.height > 0) {
 				topFromBottom = Math.max(topFromBottom, popupBottomOffset + rect.height);
 				halfWidth = Math.max(halfWidth, rect.width / 2);
+			} else {
+				topFromBottom = Math.max(topFromBottom, popupBottomOffset + 48);
 			}
 		}
 
-		// The language menu scrolls within available height, so it only influences width.
-		// Its presence in the DOM means it's open.
-		if (languageMenuPanelRef.current) {
-			const rect = languageMenuPanelRef.current.getBoundingClientRect();
-			halfWidth = Math.max(halfWidth, centerX - rect.left, rect.right - centerX);
+		if (systemLocaleSuggestion) {
+			topFromBottom = Math.max(topFromBottom, viewportHeight - HUD_LANGUAGE_PROMPT_TOP);
+			halfWidth = Math.max(halfWidth, 280);
 		}
 
 		setHudBarHeight((prev) => {
@@ -355,12 +266,14 @@ export function LaunchWindow() {
 
 		const width = Math.max(MIN_WIDTH, Math.ceil(halfWidth * 2) + SIDE_MARGIN);
 		const height = Math.ceil(topFromBottom) + TOP_MARGIN;
-		if (width === lastHudSizeRef.current.width && height === lastHudSizeRef.current.height) {
+		const widthDelta = Math.abs(width - lastHudSizeRef.current.width);
+		const heightDelta = Math.abs(height - lastHudSizeRef.current.height);
+		if (widthDelta <= 2 && heightDelta <= 2) {
 			return;
 		}
 		lastHudSizeRef.current = { width, height };
 		window.electronAPI.setHudOverlaySize(width, height);
-	}, [trayLayout]);
+	}, [trayLayout, systemLocaleSuggestion]);
 
 	// One persistent observer; elements wire themselves up via callback refs as they
 	// mount/unmount so measurement re-runs without recreating it or threading mount state through deps.
@@ -395,10 +308,6 @@ export function LaunchWindow() {
 		(el: HTMLDivElement | null) => observeHudElement(el, deviceSelectorRef),
 		[observeHudElement],
 	);
-	const setLanguageMenuPanelEl = useCallback(
-		(el: HTMLDivElement | null) => observeHudElement(el, languageMenuPanelRef),
-		[observeHudElement],
-	);
 
 	const hudMouseEventsEnabledRef = useRef<boolean | undefined>(undefined);
 	const setHudMouseEventsEnabled = useCallback((enabled: boolean) => {
@@ -417,8 +326,16 @@ export function LaunchWindow() {
 	}, [setHudMouseEventsEnabled]);
 
 	useEffect(() => {
-		setHudMouseEventsEnabled(isLanguageMenuOpen);
-	}, [isLanguageMenuOpen, setHudMouseEventsEnabled]);
+		return window.electronAPI?.onHudSettingsSync?.((payload) => {
+			if (payload.trayLayout === "horizontal" || payload.trayLayout === "vertical") {
+				setTrayLayout(payload.trayLayout);
+			}
+			if (payload.locale) {
+				setLocale(payload.locale as Locale);
+				resolveSystemLocaleSuggestion();
+			}
+		});
+	}, [resolveSystemLocaleSuggestion, setLocale]);
 
 	const [selectedSource, setSelectedSource] = useState("Screen");
 	const [hasSelectedSource, setHasSelectedSource] = useState(false);
@@ -458,17 +375,6 @@ export function LaunchWindow() {
 			window.electronAPI.hudOverlayHide();
 		}
 	};
-	const sendHudOverlayClose = () => {
-		if (window.electronAPI && window.electronAPI.hudOverlayClose) {
-			window.electronAPI.hudOverlayClose();
-		}
-	};
-	/** Switches the HUD between horizontal and vertical tray layouts. */
-	const toggleTrayLayout = () => {
-		const nextLayout = trayLayout === "horizontal" ? "vertical" : "horizontal";
-		setTrayLayout(nextLayout);
-		saveUserPreferences({ trayLayout: nextLayout });
-	};
 
 	const toggleMicrophone = () => {
 		if (!recording) {
@@ -506,14 +412,11 @@ export function LaunchWindow() {
 			className={`h-full w-full min-w-0 max-w-full overflow-x-hidden overflow-y-hidden bg-transparent ${styles.electronDrag}`}
 			onPointerMove={(event) => {
 				const target = event.target as HTMLElement | null;
-				const shouldCapture =
-					isLanguageMenuOpen || Boolean(target?.closest("[data-hud-interactive='true']"));
+				const shouldCapture = Boolean(target?.closest("[data-hud-interactive='true']"));
 				setHudMouseEventsEnabled(shouldCapture);
 			}}
 			onPointerLeave={() => {
-				if (!isLanguageMenuOpen) {
-					setHudMouseEventsEnabled(false);
-				}
+				setHudMouseEventsEnabled(false);
 			}}
 		>
 			{systemLocaleSuggestion && (
@@ -710,9 +613,7 @@ export function LaunchWindow() {
 				onPointerDown={() => setHudMouseEventsEnabled(true)}
 				onMouseEnter={() => setHudMouseEventsEnabled(true)}
 				onMouseLeave={() => {
-					if (!isLanguageMenuOpen) {
-						setHudMouseEventsEnabled(false);
-					}
+					setHudMouseEventsEnabled(false);
 				}}
 			>
 				{/* Drag handle */}
@@ -726,32 +627,11 @@ export function LaunchWindow() {
 					{getIcon("drag", "text-white/30")}
 				</div>
 
-				<Tooltip
-					content={
-						trayLayout === "horizontal"
-							? t("tooltips.useVerticalTray")
-							: t("tooltips.useHorizontalTray")
-					}
-				>
-					<button
-						data-testid="launch-tray-layout-button"
-						type="button"
-						aria-label={
-							trayLayout === "horizontal"
-								? t("tooltips.useVerticalTray")
-								: t("tooltips.useHorizontalTray")
-						}
-						aria-pressed={trayLayout === "vertical"}
-						className={`${hudIconBtnClasses} ${styles.electronNoDrag}`}
-						onClick={toggleTrayLayout}
-					>
-						{trayLayout === "horizontal" ? (
-							<Columns3 size={ICON_SIZE} className="text-white/60" />
-						) : (
-							<Rows3 size={ICON_SIZE} className="text-white/60" />
-						)}
-					</button>
-				</Tooltip>
+				<RecordingSettingsMenu
+					recording={recording}
+					hudIconBtnClasses={hudIconBtnClasses}
+					hudBarRef={hudBarRef}
+				/>
 
 				{/* Source selector */}
 				<button
@@ -916,93 +796,13 @@ export function LaunchWindow() {
 				<div
 					className={`${trayLayout === "vertical" ? hudSidebarVerticalClasses : hudSidebarClasses} ${styles.electronNoDrag}`}
 				>
-					<div className={`${styles.languageMenuContainer} ${styles.electronNoDrag}`}>
-						<button
-							ref={languageTriggerRef}
-							type="button"
-							aria-label={t("language")}
-							aria-expanded={isLanguageMenuOpen}
-							aria-haspopup="menu"
-							onClick={() => setIsLanguageMenuOpen((open) => !open)}
-							title={activeLanguageLabel}
-							className={`flex h-8 items-center rounded-lg border border-white/10 bg-white/[0.045] text-white/85 shadow-none transition-colors hover:bg-white/10 ${
-								trayLayout === "vertical" ? "w-8 justify-center px-0" : "gap-1.5 px-2"
-							} ${styles.electronNoDrag}`}
-						>
-							<Languages size={13} className="text-white/70" />
-							<span
-								className={`${trayLayout === "vertical" ? "sr-only" : "max-w-[54px]"} truncate text-[10px] font-semibold text-white/75`}
-							>
-								{activeLanguageLabel}
-							</span>
-						</button>
-					</div>
-
-					{isLanguageMenuOpen
-						? createPortal(
-								<div
-									ref={setLanguageMenuPanelEl}
-									data-hud-interactive="true"
-									role="menu"
-									className={`${styles.languageMenuPanel} ${styles.languageMenuScroll} ${styles.electronNoDrag}`}
-									style={
-										{
-											WebkitAppRegion: "no-drag",
-											pointerEvents: "auto",
-											right: `${languageMenuStyle.right}px`,
-											top: `${languageMenuStyle.top}px`,
-											maxHeight: `${languageMenuStyle.maxHeight}px`,
-										} as React.CSSProperties
-									}
-									onPointerDown={(event) => event.stopPropagation()}
-									onPointerEnter={() => setHudMouseEventsEnabled(true)}
-									onPointerMove={() => setHudMouseEventsEnabled(true)}
-									onWheel={(event) => {
-										setHudMouseEventsEnabled(true);
-										event.stopPropagation();
-									}}
-								>
-									{availableLocales.map((loc) => (
-										<button
-											key={loc}
-											type="button"
-											role="menuitemradio"
-											aria-checked={loc === locale}
-											onClick={() => {
-												setLocale(loc);
-												resolveSystemLocaleSuggestion();
-												setIsLanguageMenuOpen(false);
-											}}
-											className={`${styles.languageMenuItem} ${loc === locale ? styles.languageMenuItemActive : ""}`}
-										>
-											<span className="truncate">{getLocaleName(loc)}</span>
-											{loc === locale ? <Check size={11} className="text-white/85" /> : null}
-										</button>
-									))}
-								</div>,
-								document.body,
-							)
-						: null}
-
-					{/* Window controls */}
-					<div
-						className={`flex items-center gap-0.5 ${trayLayout === "vertical" ? "flex-col" : ""}`}
+					<button
+						className={windowBtnClasses}
+						title={t("tooltips.hideHUD")}
+						onClick={sendHudOverlayHide}
 					>
-						<button
-							className={windowBtnClasses}
-							title={t("tooltips.hideHUD")}
-							onClick={sendHudOverlayHide}
-						>
-							{getIcon("minimize", "text-white")}
-						</button>
-						<button
-							className={windowBtnClasses}
-							title={t("tooltips.closeApp")}
-							onClick={sendHudOverlayClose}
-						>
-							{getIcon("close", "text-white")}
-						</button>
-					</div>
+						{getIcon("minimize", "text-white")}
+					</button>
 				</div>
 			</div>
 		</div>

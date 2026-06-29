@@ -9,7 +9,8 @@
 		"openVideoFile": "開啟影片檔案",
 		"openProject": "開啟專案",
 		"useVerticalTray": "使用直向托盤",
-		"useHorizontalTray": "使用橫向托盤"
+		"useHorizontalTray": "使用橫向托盤",
+		"openRecordingSettings": "Settings"
 	},
 	"audio": {
 		"enableSystemAudio": "啟用系統音訊",
@@ -45,5 +46,31 @@
 		"description": "偵測到系統語言為 {{language}}。要將 OpenScreen 切換為 {{language}} 嗎？",
 		"switch": "切換為 {{language}}",
 		"keepDefault": "保持目前語言"
+	},
+	"recordingSettings": {
+		"title": "Settings",
+		"trayLayout": {
+			"label": "Vertical tray",
+			"description": "Stack HUD controls vertically instead of horizontally."
+		},
+		"language": {
+			"label": "Language"
+		},
+		"captureSection": "Capture",
+		"excludeTaskbar": {
+			"label": "Exclude taskbar",
+			"description": "When recording a display, capture only the work area without the taskbar."
+		},
+		"windowPadding": {
+			"label": "Window capture padding",
+			"description": "Extra pixels to include around a selected window on all four sides.",
+			"unit": "px",
+			"top": "Top",
+			"right": "Right",
+			"bottom": "Bottom",
+			"left": "Left"
+		},
+		"nativeOnlyHint": "These options apply to native Windows capture.",
+		"close": "Close settings"
 	}
 }

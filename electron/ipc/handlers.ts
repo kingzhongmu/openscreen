@@ -1614,6 +1614,24 @@ export function registerIpcHandlers(
 					webcamHeight: request.webcam.height,
 					webcamFps: request.webcam.fps,
 					captureCursor: cursorCaptureMode === "system",
+					excludeTaskbar:
+						request.source.type === "display" && request.capture?.excludeTaskbar === true,
+					windowCapturePaddingTop:
+						request.source.type === "window"
+							? Math.max(0, Math.min(500, Math.round(request.capture?.windowPadding?.top ?? 0)))
+							: 0,
+					windowCapturePaddingRight:
+						request.source.type === "window"
+							? Math.max(0, Math.min(500, Math.round(request.capture?.windowPadding?.right ?? 0)))
+							: 0,
+					windowCapturePaddingBottom:
+						request.source.type === "window"
+							? Math.max(0, Math.min(500, Math.round(request.capture?.windowPadding?.bottom ?? 0)))
+							: 0,
+					windowCapturePaddingLeft:
+						request.source.type === "window"
+							? Math.max(0, Math.min(500, Math.round(request.capture?.windowPadding?.left ?? 0)))
+							: 0,
 					cursorCaptureMode,
 					outputs: {
 						screenPath: outputPath,

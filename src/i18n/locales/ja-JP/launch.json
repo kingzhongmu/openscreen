@@ -9,7 +9,8 @@
 		"openVideoFile": "動画ファイルを開く",
 		"openProject": "プロジェクトを開く",
 		"useVerticalTray": "縦型トレイを使用",
-		"useHorizontalTray": "横型トレイを使用"
+		"useHorizontalTray": "横型トレイを使用",
+		"openRecordingSettings": "Settings"
 	},
 	"audio": {
 		"enableSystemAudio": "システム音声を有効にする",
@@ -45,5 +46,31 @@
 		"description": "システム言語として{{language}}が検出されました。OpenScreenを{{language}}に切り替えますか？",
 		"switch": "{{language}}に切り替え",
 		"keepDefault": "現在の言語を保持"
+	},
+	"recordingSettings": {
+		"title": "Settings",
+		"trayLayout": {
+			"label": "Vertical tray",
+			"description": "Stack HUD controls vertically instead of horizontally."
+		},
+		"language": {
+			"label": "Language"
+		},
+		"captureSection": "Capture",
+		"excludeTaskbar": {
+			"label": "Exclude taskbar",
+			"description": "When recording a display, capture only the work area without the taskbar."
+		},
+		"windowPadding": {
+			"label": "Window capture padding",
+			"description": "Extra pixels to include around a selected window on all four sides.",
+			"unit": "px",
+			"top": "Top",
+			"right": "Right",
+			"bottom": "Bottom",
+			"left": "Left"
+		},
+		"nativeOnlyHint": "These options apply to native Windows capture.",
+		"close": "Close settings"
 	}
 }

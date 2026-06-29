@@ -276,6 +276,26 @@ interface Window {
 		setHudOverlayIgnoreMouseEvents: (ignore: boolean) => void;
 		moveHudOverlayBy: (deltaX: number, deltaY: number) => void;
 		setHudOverlaySize: (width: number, height: number) => void;
+		toggleHudSettings: (anchor: {
+			anchorCenterX?: number;
+			anchorTopY?: number;
+			gap?: number;
+			x?: number;
+			y?: number;
+			width?: number;
+			height?: number;
+		}) => Promise<{ opened: boolean }>;
+		moveHudSettingsBy: (deltaX: number, deltaY: number) => void;
+		closeHudSettings: () => void;
+		setHudSettingsSize: (width: number, height: number) => void;
+		notifyHudSettingsSync: (payload: {
+			trayLayout?: "horizontal" | "vertical";
+			locale?: string;
+		}) => void;
+		onHudSettingsClosed: (callback: () => void) => () => void;
+		onHudSettingsSync: (
+			callback: (payload: { trayLayout?: "horizontal" | "vertical"; locale?: string }) => void,
+		) => () => void;
 		showCountdownOverlay: (value: number, runId: number) => Promise<void>;
 		setCountdownOverlayValue: (value: number, runId: number) => Promise<void>;
 		hideCountdownOverlay: (runId: number) => Promise<void>;

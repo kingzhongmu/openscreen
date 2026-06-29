@@ -40,6 +40,8 @@ struct CaptureConfig {
     bool captureSystemAudio = false;
     bool captureMic = false;
     bool captureCursor = false;
+    bool excludeTaskbar = false;
+    WindowCapturePadding windowCapturePadding{};
     bool webcamEnabled = false;
     std::string microphoneDeviceId;
     std::string microphoneDeviceName;
@@ -338,6 +340,15 @@ bool parseConfig(const std::string& json, CaptureConfig& config) {
     config.captureSystemAudio = findBool(json, "captureSystemAudio", false);
     config.captureMic = findBool(json, "captureMic", false);
     config.captureCursor = findBool(json, "captureCursor", false);
+    config.excludeTaskbar = findBool(json, "excludeTaskbar", false);
+    config.windowCapturePadding.top =
+        std::clamp(findInt(json, "windowCapturePaddingTop", findInt(json, "windowCapturePadding", 0)), 0, 500);
+    config.windowCapturePadding.right =
+        std::clamp(findInt(json, "windowCapturePaddingRight", findInt(json, "windowCapturePadding", 0)), 0, 500);
+    config.windowCapturePadding.bottom =
+        std::clamp(findInt(json, "windowCapturePaddingBottom", findInt(json, "windowCapturePadding", 0)), 0, 500);
+    config.windowCapturePadding.left =
+        std::clamp(findInt(json, "windowCapturePaddingLeft", findInt(json, "windowCapturePadding", 0)), 0, 500);
     config.webcamEnabled = findBool(json, "webcamEnabled", false);
     config.microphoneDeviceId = findString(json, "microphoneDeviceId");
     config.microphoneDeviceName = findString(json, "microphoneDeviceName");
@@ -398,8 +409,7 @@ int main(int argc, char* argv[]) {
     std::cout << "{\"event\":\"ready\",\"schemaVersion\":2}" << std::endl;
 
     WgcSession session;
-    WindowCaptureState windowCaptureState{};
-    const bool captureWindowViaMonitor = config.sourceType == "window";
+    MonitorCropState cropState{};
     if (config.sourceType == "display") {
         HMONITOR monitor = findMonitorForCapture(
             config.displayId,
@@ -412,23 +422,37 @@ int main(int argc, char* argv[]) {
             std::cerr << "ERROR: Failed to initialize WGC display session" << std::endl;
             return 1;
         }
+        if (config.excludeTaskbar &&
+            !initializeDisplayMonitorCrop(monitor, true, cropState)) {
+            std::cerr << "ERROR: Could not resolve display work area for taskbar exclusion" << std::endl;
+            return 1;
+        }
+        if (cropState.enabled) {
+            std::cout << "{\"event\":\"display-capture-mode\",\"schemaVersion\":2,\"mode\":\"monitor-crop\","
+                      << "\"excludeTaskbar\":true,\"width\":" << cropState.outputWidth
+                      << ",\"height\":" << cropState.outputHeight << "}" << std::endl;
+        }
     } else if (config.sourceType == "window") {
         HWND window = parseWindowHandle(config.windowHandle);
         if (!window || !IsWindow(window)) {
             std::cerr << "ERROR: Native window capture requires a valid HWND" << std::endl;
             return 1;
         }
-        if (!initializeWindowCaptureState(window, windowCaptureState)) {
+        if (!initializeWindowMonitorCrop(window, config.windowCapturePadding, cropState)) {
             std::cerr << "ERROR: Could not resolve native window capture bounds" << std::endl;
             return 1;
         }
-        if (!session.initialize(windowCaptureState.monitor, config.fps, config.captureCursor)) {
+        if (!session.initialize(cropState.monitor, config.fps, config.captureCursor)) {
             std::cerr << "ERROR: Failed to initialize WGC monitor session for window capture" << std::endl;
             return 1;
         }
         std::cout << "{\"event\":\"window-capture-mode\",\"schemaVersion\":2,\"mode\":\"monitor-crop\","
-                  << "\"width\":" << windowCaptureState.outputWidth
-                  << ",\"height\":" << windowCaptureState.outputHeight << "}" << std::endl;
+                  << "\"padding\":{\"top\":" << config.windowCapturePadding.top
+                  << ",\"right\":" << config.windowCapturePadding.right
+                  << ",\"bottom\":" << config.windowCapturePadding.bottom
+                  << ",\"left\":" << config.windowCapturePadding.left << "}"
+                  << ",\"width\":" << cropState.outputWidth
+                  << ",\"height\":" << cropState.outputHeight << "}" << std::endl;
     } else {
         std::cerr << "ERROR: Unsupported native capture source type: " << config.sourceType << std::endl;
         return 1;
@@ -437,8 +461,8 @@ int main(int argc, char* argv[]) {
     // WGC owns the captured texture size. Encoding must use that exact size
     // until a dedicated GPU scaling pass is introduced; CopyResource requires
     // matching resource dimensions.
-    int width = captureWindowViaMonitor ? windowCaptureState.outputWidth : session.captureWidth();
-    int height = captureWindowViaMonitor ? windowCaptureState.outputHeight : session.captureHeight();
+    int width = cropState.enabled ? cropState.outputWidth : session.captureWidth();
+    int height = cropState.enabled ? cropState.outputHeight : session.captureHeight();
     width = (std::max(2, width) / 2) * 2;
     height = (std::max(2, height) / 2) * 2;
 
@@ -566,7 +590,7 @@ int main(int argc, char* argv[]) {
         if (!latestFrameTexture) {
             D3D11_TEXTURE2D_DESC desc{};
             texture->GetDesc(&desc);
-            if (captureWindowViaMonitor) {
+            if (cropState.enabled) {
                 desc.Width = static_cast<UINT>(width);
                 desc.Height = static_cast<UINT>(height);
             }
@@ -581,11 +605,11 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (captureWindowViaMonitor) {
+        if (cropState.enabled) {
             D3D11_TEXTURE2D_DESC monitorDesc{};
             texture->GetDesc(&monitorDesc);
             D3D11_BOX srcBox{};
-            if (!computeMonitorRelativeCropBox(windowCaptureState, monitorDesc, srcBox)) {
+            if (!computeMonitorCropBox(cropState, monitorDesc, srcBox)) {
                 return;
             }
             session.context()->CopySubresourceRegion(

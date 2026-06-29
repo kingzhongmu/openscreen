@@ -173,9 +173,7 @@ async function downloadModelFile(rel, dest) {
 			return;
 		} catch (err) {
 			lastErr = err;
-			console.log(
-				`  … ${mirror} failed for ${rel}: ${err instanceof Error ? err.message : err}`,
-			);
+			console.log(`  … ${mirror} failed for ${rel}: ${err instanceof Error ? err.message : err}`);
 		}
 	}
 	throw lastErr ?? new Error(`Failed to download ${rel}`);
