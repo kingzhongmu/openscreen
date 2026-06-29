@@ -124,6 +124,8 @@
 	"annotation": {
 		"title": "标注设置",
 		"active": "活动",
+		"anchorTime": "锚点",
+		"duration": "持续时长",
 		"typeText": "文本",
 		"typeImage": "图片",
 		"typeArrow": "箭头",

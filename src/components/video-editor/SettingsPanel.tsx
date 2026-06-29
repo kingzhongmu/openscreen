@@ -310,6 +310,8 @@ interface SettingsPanelProps {
 	onAnnotationFigureDataChange?: (id: string, figureData: FigureData) => void;
 	onAnnotationDuplicate?: (id: string) => void;
 	onAnnotationDelete?: (id: string) => void;
+	videoDurationMs?: number;
+	onAnnotationDurationChange?: (id: string, durationMs: number) => void;
 	selectedBlurId?: string | null;
 	blurRegions?: AnnotationRegion[];
 	onBlurDataChange?: (id: string, blurData: BlurData) => void;
@@ -446,6 +448,8 @@ export function SettingsPanel({
 	onAnnotationFigureDataChange,
 	onAnnotationDuplicate,
 	onAnnotationDelete,
+	videoDurationMs,
+	onAnnotationDurationChange,
 	selectedBlurId,
 	blurRegions = [],
 	onBlurDataChange,
@@ -790,9 +794,15 @@ export function SettingsPanel({
 				<div className="min-h-0 flex-1 overflow-hidden">
 					<AnnotationSettingsPanel
 						annotation={selectedAnnotation}
+						videoDurationMs={videoDurationMs}
 						onContentChange={(content) => onAnnotationContentChange(selectedAnnotation.id, content)}
 						onTypeChange={(type) => onAnnotationTypeChange(selectedAnnotation.id, type)}
 						onStyleChange={(style) => onAnnotationStyleChange(selectedAnnotation.id, style)}
+						onDurationChange={
+							onAnnotationDurationChange
+								? (durationMs) => onAnnotationDurationChange(selectedAnnotation.id, durationMs)
+								: undefined
+						}
 						onFigureDataChange={
 							onAnnotationFigureDataChange
 								? (figureData) => onAnnotationFigureDataChange(selectedAnnotation.id, figureData)

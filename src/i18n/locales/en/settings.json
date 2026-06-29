@@ -125,6 +125,8 @@
 	"annotation": {
 		"title": "Annotation Settings",
 		"active": "Active",
+		"anchorTime": "Anchor",
+		"duration": "Duration",
 		"typeText": "Text",
 		"typeImage": "Image",
 		"typeArrow": "Arrow",

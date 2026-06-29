@@ -27,7 +27,6 @@ import { type Locale } from "@/i18n/config";
 import { getAvailableLocales, getLocaleName } from "@/i18n/loader";
 import {
 	getAnnotationFigureDataPreset,
-	getAnnotationTextStylePreset,
 	saveAnnotationFigureDataPreset,
 	saveAnnotationTextStylePreset,
 } from "@/lib/annotationPreferences";
@@ -73,6 +72,7 @@ import {
 	getNativeAspectRatioValue,
 	isPortraitAspectRatio,
 } from "@/utils/aspectRatioUtils";
+import { AddPositionAnnotationMenu } from "./AddPositionAnnotationMenu";
 import { EditorEmptyState } from "./EditorEmptyState";
 import { ExportDialog } from "./ExportDialog";
 import {
@@ -82,6 +82,11 @@ import {
 	DEFAULT_SOURCE_DIMENSIONS,
 } from "./editorDefaults";
 import PlaybackControls from "./PlaybackControls";
+import {
+	buildPositionAnnotationRegion,
+	computePositionAnnotationSpan,
+	DEFAULT_POSITION_ANNOTATION_DURATION_MS,
+} from "./positionAnnotation";
 import {
 	createProjectData,
 	createProjectSnapshot,
@@ -100,8 +105,6 @@ import {
 	type AnnotationRegion,
 	type BlurData,
 	clampFocusToDepth,
-	DEFAULT_ANNOTATION_POSITION,
-	DEFAULT_ANNOTATION_SIZE,
 	DEFAULT_BLUR_DATA,
 	DEFAULT_PLAYBACK_SPEED,
 	DEFAULT_ZOOM_DEPTH,
@@ -1356,59 +1359,57 @@ export default function VideoEditor() {
 		[selectedSpeedId, pushState],
 	);
 
-	const handleAnnotationAdded = useCallback(
-		(span: Span) => {
+	const handlePositionAnnotationAdded = useCallback(
+		(
+			type: AnnotationRegion["type"],
+			options?: { anchorMs?: number; durationMs?: number; pausePlayback?: boolean },
+		) => {
+			const totalMs = Math.round(durationRef.current * 1000);
+			if (totalMs <= 0) {
+				return;
+			}
+
+			const anchorMs = options?.anchorMs ?? Math.round(currentTime * 1000);
+			const span = computePositionAnnotationSpan(
+				anchorMs,
+				options?.durationMs ?? DEFAULT_POSITION_ANNOTATION_DURATION_MS,
+				totalMs,
+			);
+			if (span.end <= span.start) {
+				return;
+			}
+
 			const id = `annotation-${nextAnnotationIdRef.current++}`;
 			const zIndex = nextAnnotationZIndexRef.current++;
-			const newRegion: AnnotationRegion = {
-				id,
-				startMs: Math.round(span.start),
-				endMs: Math.round(span.end),
-				type: "text",
-				content: "Enter text...",
-				position: { ...DEFAULT_ANNOTATION_POSITION },
-				size: { ...DEFAULT_ANNOTATION_SIZE },
-				style: { ...getAnnotationTextStylePreset() },
-				zIndex,
-			};
+			const newRegion = buildPositionAnnotationRegion(type, span, id, zIndex);
+
 			pushState((prev) => ({
 				annotationRegions: [...prev.annotationRegions, newRegion],
 			}));
-			setSelectedAnnotationId(id);
+
+			if (type === "blur") {
+				setSelectedBlurId(id);
+				setSelectedAnnotationId(null);
+			} else {
+				setSelectedAnnotationId(id);
+				setSelectedBlurId(null);
+			}
 			setSelectedZoomId(null);
 			setSelectedTrimId(null);
 			setSelectedSpeedId(null);
-			setSelectedBlurId(null);
+
+			if (options?.pausePlayback !== false) {
+				setIsPlaying(false);
+			}
 		},
-		[pushState],
+		[currentTime, pushState],
 	);
 
-	const handleBlurAdded = useCallback(
-		(span: Span) => {
-			const id = `annotation-${nextAnnotationIdRef.current++}`;
-			const zIndex = nextAnnotationZIndexRef.current++;
-			const newRegion: AnnotationRegion = {
-				id,
-				startMs: Math.round(span.start),
-				endMs: Math.round(span.end),
-				type: "blur",
-				content: "",
-				position: { ...DEFAULT_ANNOTATION_POSITION },
-				size: { ...DEFAULT_ANNOTATION_SIZE },
-				style: { ...getAnnotationTextStylePreset() },
-				zIndex,
-				blurData: { ...DEFAULT_BLUR_DATA },
-			};
-			pushState((prev) => ({
-				annotationRegions: [...prev.annotationRegions, newRegion],
-			}));
-			setSelectedBlurId(id);
-			setSelectedAnnotationId(null);
-			setSelectedZoomId(null);
-			setSelectedTrimId(null);
-			setSelectedSpeedId(null);
+	const handleAnnotationAdded = useCallback(
+		(type: AnnotationRegion["type"] = "text") => {
+			handlePositionAnnotationAdded(type);
 		},
-		[pushState],
+		[handlePositionAnnotationAdded],
 	);
 
 	const handleAnnotationSpanChange = useCallback(
@@ -1423,6 +1424,33 @@ export default function VideoEditor() {
 								...region,
 								startMs: Math.round(span.start),
 								endMs: Math.round(span.end),
+							}
+						: region,
+				);
+				return {
+					annotationRegions: editedAutoCaption ? reconcileAutoCaptionTimelineGaps(next) : next,
+				};
+			});
+		},
+		[pushState],
+	);
+
+	const handleAnnotationDurationChange = useCallback(
+		(id: string, durationMs: number) => {
+			const totalMs = Math.round(durationRef.current * 1000);
+			pushState((prev) => {
+				const source = prev.annotationRegions.find((region) => region.id === id);
+				if (!source) {
+					return {};
+				}
+
+				const span = computePositionAnnotationSpan(source.startMs, durationMs, totalMs);
+				const editedAutoCaption = source.annotationSource === "auto-caption";
+				const next = prev.annotationRegions.map((region) =>
+					region.id === id
+						? {
+								...region,
+								endMs: span.end,
 							}
 						: region,
 				);
@@ -2666,7 +2694,7 @@ export default function VideoEditor() {
 											</div>
 										</div>
 										{/* Playback controls */}
-										<div className="w-full flex justify-center items-center h-14 flex-shrink-0 px-4 py-2">
+										<div className="w-full flex justify-center items-center gap-3 h-14 flex-shrink-0 px-4 py-2">
 											<div className="w-full max-w-[760px]">
 												<PlaybackControls
 													isPlaying={isPlaying}
@@ -2678,6 +2706,10 @@ export default function VideoEditor() {
 													onSeek={handleSeek}
 												/>
 											</div>
+											<AddPositionAnnotationMenu
+												disabled={!videoPath || duration <= 0}
+												onAdd={({ type }) => handlePositionAnnotationAdded(type)}
+											/>
 										</div>
 									</div>
 								</div>
@@ -2820,6 +2852,8 @@ export default function VideoEditor() {
 										onAnnotationFigureDataChange={handleAnnotationFigureDataChange}
 										onAnnotationDuplicate={handleAnnotationDuplicate}
 										onAnnotationDelete={handleAnnotationDelete}
+										videoDurationMs={Math.round(duration * 1000)}
+										onAnnotationDurationChange={handleAnnotationDurationChange}
 										selectedBlurId={selectedBlurId}
 										blurRegions={blurRegions}
 										onBlurDataChange={handleBlurDataPanelChange}
@@ -2900,7 +2934,6 @@ export default function VideoEditor() {
 									selectedAnnotationId={selectedAnnotationId}
 									onSelectAnnotation={handleSelectAnnotation}
 									blurRegions={blurRegions}
-									onBlurAdded={handleBlurAdded}
 									onBlurSpanChange={handleAnnotationSpanChange}
 									onBlurDelete={handleAnnotationDelete}
 									selectedBlurId={selectedBlurId}

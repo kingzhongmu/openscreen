@@ -5,7 +5,6 @@ import {
 	Check,
 	ChevronDown,
 	Gauge,
-	MessageSquare,
 	Plus,
 	ScanEye,
 	Scissors,
@@ -29,8 +28,15 @@ import { matchesShortcut } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { ASPECT_RATIOS, type AspectRatio, getAspectRatioLabel } from "@/utils/aspectRatioUtils";
 import { formatShortcut } from "@/utils/platformUtils";
+import { AddPositionAnnotationMenu } from "../AddPositionAnnotationMenu";
 import { BLUR_REGIONS_ENABLED } from "../featureFlags";
-import type { AnnotationRegion, SpeedRegion, TrimRegion, ZoomRegion } from "../types";
+import type {
+	AnnotationRegion,
+	AnnotationType,
+	SpeedRegion,
+	TrimRegion,
+	ZoomRegion,
+} from "../types";
 import BackgroundWaveform from "./BackgroundWaveform";
 import Item from "./Item";
 import KeyframeMarkers from "./KeyframeMarkers";
@@ -69,13 +75,12 @@ interface TimelineEditorProps {
 	selectedTrimId?: string | null;
 	onSelectTrim?: (id: string | null) => void;
 	annotationRegions?: AnnotationRegion[];
-	onAnnotationAdded?: (span: Span) => void;
+	onAnnotationAdded?: (type: AnnotationType) => void;
 	onAnnotationSpanChange?: (id: string, span: Span) => void;
 	onAnnotationDelete?: (id: string) => void;
 	selectedAnnotationId?: string | null;
 	onSelectAnnotation?: (id: string | null) => void;
 	blurRegions?: AnnotationRegion[];
-	onBlurAdded?: (span: Span) => void;
 	onBlurSpanChange?: (id: string, span: Span) => void;
 	onBlurDelete?: (id: string) => void;
 	selectedBlurId?: string | null;
@@ -910,7 +915,6 @@ export default function TimelineEditor({
 	selectedAnnotationId,
 	onSelectAnnotation,
 	blurRegions = [],
-	onBlurAdded,
 	onBlurSpanChange,
 	onBlurDelete,
 	selectedBlurId,
@@ -1204,37 +1208,15 @@ export default function TimelineEditor({
 		t,
 	]);
 
-	const handleAddAnnotation = useCallback(() => {
-		if (!videoDuration || videoDuration === 0 || totalMs === 0 || !onAnnotationAdded) {
-			return;
-		}
-
-		const defaultDuration = Math.min(defaultRegionDurationMs, totalMs);
-		if (defaultDuration <= 0) {
-			return;
-		}
-
-		// Multiple annotations can exist at the same timestamp
-		const startPos = Math.max(0, Math.min(currentTimeMs, totalMs));
-		const endPos = Math.min(startPos + defaultDuration, totalMs);
-
-		onAnnotationAdded({ start: startPos, end: endPos });
-	}, [videoDuration, totalMs, currentTimeMs, onAnnotationAdded, defaultRegionDurationMs]);
-
-	const handleAddBlur = useCallback(() => {
-		if (!videoDuration || videoDuration === 0 || totalMs === 0 || !onBlurAdded) {
-			return;
-		}
-
-		const defaultDuration = Math.min(defaultRegionDurationMs, totalMs);
-		if (defaultDuration <= 0) {
-			return;
-		}
-
-		const startPos = Math.max(0, Math.min(currentTimeMs, totalMs));
-		const endPos = Math.min(startPos + defaultDuration, totalMs);
-		onBlurAdded({ start: startPos, end: endPos });
-	}, [videoDuration, totalMs, currentTimeMs, onBlurAdded, defaultRegionDurationMs]);
+	const handleAddAnnotation = useCallback(
+		(type: AnnotationType = "text") => {
+			if (!videoDuration || videoDuration === 0 || totalMs === 0 || !onAnnotationAdded) {
+				return;
+			}
+			onAnnotationAdded(type);
+		},
+		[videoDuration, totalMs, onAnnotationAdded],
+	);
 
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -1252,10 +1234,10 @@ export default function TimelineEditor({
 				handleAddTrim();
 			}
 			if (matchesShortcut(e, keyShortcuts.addAnnotation, isMac)) {
-				handleAddAnnotation();
+				handleAddAnnotation("text");
 			}
 			if (BLUR_REGIONS_ENABLED && matchesShortcut(e, keyShortcuts.addBlur, isMac)) {
-				handleAddBlur();
+				handleAddAnnotation("blur");
 			}
 			if (matchesShortcut(e, keyShortcuts.addSpeed, isMac)) {
 				handleAddSpeed();
@@ -1310,7 +1292,6 @@ export default function TimelineEditor({
 		handleAddZoom,
 		handleAddTrim,
 		handleAddAnnotation,
-		handleAddBlur,
 		handleAddSpeed,
 		deleteSelectedKeyframe,
 		deleteSelectedZoom,
@@ -1521,36 +1502,11 @@ export default function TimelineEditor({
 					>
 						<Scissors className="w-4 h-4" />
 					</Button>
-					<Button
-						onClick={handleAddAnnotation}
-						variant="ghost"
-						size="icon"
-						className="h-7 w-7 rounded-lg text-slate-400 hover:text-[#B4A046] hover:bg-[#B4A046]/10 transition-all"
-						title={t("buttons.addAnnotation")}
-					>
-						<MessageSquare className="w-4 h-4" />
-					</Button>
-					{BLUR_REGIONS_ENABLED && (
-						<Button
-							onClick={handleAddBlur}
-							variant="ghost"
-							size="icon"
-							className="h-7 w-7 rounded-lg text-slate-400 hover:text-[#7dd3fc] hover:bg-[#7dd3fc]/10 transition-all"
-							title={t("buttons.addBlur")}
-						>
-							<svg
-								className="w-4 h-4"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								strokeWidth="2"
-							>
-								<circle cx="8" cy="12" r="3" />
-								<circle cx="16" cy="12" r="3" />
-								<path d="M6 6h12M6 18h12" />
-							</svg>
-						</Button>
-					)}
+					<AddPositionAnnotationMenu
+						disabled={!videoDuration || videoDuration === 0}
+						variant="icon"
+						onAdd={({ type }) => handleAddAnnotation(type)}
+					/>
 					<Button
 						onClick={handleAddSpeed}
 						variant="ghost"

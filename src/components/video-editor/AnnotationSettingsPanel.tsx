@@ -47,6 +47,11 @@ import {
 	normalizeFigureData,
 } from "./arrowGeometry";
 import {
+	formatAnnotationClockMs,
+	MAX_POSITION_ANNOTATION_DURATION_MS,
+	MIN_POSITION_ANNOTATION_DURATION_MS,
+} from "./positionAnnotation";
+import {
 	type AnnotationRegion,
 	type AnnotationType,
 	type ArrowDirection,
@@ -56,9 +61,11 @@ import {
 
 interface AnnotationSettingsPanelProps {
 	annotation: AnnotationRegion;
+	videoDurationMs?: number;
 	onContentChange: (content: string) => void;
 	onTypeChange: (type: AnnotationType) => void;
 	onStyleChange: (style: Partial<AnnotationRegion["style"]>) => void;
+	onDurationChange?: (durationMs: number) => void;
 	onFigureDataChange?: (figureData: FigureData) => void;
 	onDuplicate?: () => void;
 	onDelete: () => void;
@@ -98,9 +105,11 @@ const FONT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 
 
 export function AnnotationSettingsPanel({
 	annotation,
+	videoDurationMs,
 	onContentChange,
 	onTypeChange,
 	onStyleChange,
+	onDurationChange,
 	onFigureDataChange,
 	onDuplicate,
 	onDelete,
@@ -179,6 +188,11 @@ export function AnnotationSettingsPanel({
 		event.target.value = "";
 	};
 
+	const durationMs = Math.max(1, annotation.endMs - annotation.startMs);
+	const maxDurationMs = videoDurationMs
+		? Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, videoDurationMs - annotation.startMs)
+		: MAX_POSITION_ANNOTATION_DURATION_MS;
+
 	return (
 		<div className="min-w-0 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar">
 			<div className="mb-3">
@@ -188,6 +202,46 @@ export function AnnotationSettingsPanel({
 					</span>
 					<div className="mt-1 text-xl font-semibold text-slate-100">{t("annotation.title")}</div>
 				</div>
+
+				{onDurationChange && (
+					<div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 space-y-3">
+						<div className="flex items-center justify-between gap-3">
+							<div>
+								<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+									{t("annotation.anchorTime")}
+								</div>
+								<div className="mt-1 text-sm font-semibold tabular-nums text-slate-100">
+									{formatAnnotationClockMs(annotation.startMs)}
+								</div>
+							</div>
+							<div className="text-right">
+								<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+									{t("annotation.duration")}
+								</div>
+								<div className="mt-1 text-sm font-semibold tabular-nums text-[#B4A046]">
+									{(durationMs / 1000).toFixed(1)}s
+								</div>
+							</div>
+						</div>
+						<div>
+							<Slider
+								value={[Math.min(durationMs, maxDurationMs)]}
+								min={MIN_POSITION_ANNOTATION_DURATION_MS}
+								max={Math.min(maxDurationMs, MAX_POSITION_ANNOTATION_DURATION_MS)}
+								step={100}
+								onValueChange={([value]) => onDurationChange(value)}
+								className="py-1"
+							/>
+							<div className="mt-1 flex justify-between text-[10px] text-slate-500 tabular-nums">
+								<span>{(MIN_POSITION_ANNOTATION_DURATION_MS / 1000).toFixed(1)}s</span>
+								<span>
+									{(Math.min(maxDurationMs, MAX_POSITION_ANNOTATION_DURATION_MS) / 1000).toFixed(1)}
+									s
+								</span>
+							</div>
+						</div>
+					</div>
+				)}
 
 				{/* Type Selector */}
 				<Tabs
