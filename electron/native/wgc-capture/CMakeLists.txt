@@ -23,6 +23,8 @@ add_executable(wgc-capture
   src/mf_encoder.h
   src/monitor_utils.cpp
   src/monitor_utils.h
+  src/window_utils.cpp
+  src/window_utils.h
   src/wasapi_loopback_capture.cpp
   src/wasapi_loopback_capture.h
   src/webcam_capture.cpp
@@ -41,6 +43,7 @@ target_compile_options(wgc-capture PRIVATE /EHsc /W4 /utf-8 /await)
 
 target_link_libraries(wgc-capture PRIVATE
   d3d11
+  dwmapi
   dxgi
   mf
   mfplat

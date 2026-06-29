@@ -3,6 +3,7 @@
 #include "monitor_utils.h"
 #include "wasapi_loopback_capture.h"
 #include "webcam_capture.h"
+#include "window_utils.h"
 #include "wgc_session.h"
 
 #include <winrt/Windows.Foundation.h>
@@ -397,6 +398,8 @@ int main(int argc, char* argv[]) {
     std::cout << "{\"event\":\"ready\",\"schemaVersion\":2}" << std::endl;
 
     WgcSession session;
+    WindowCaptureState windowCaptureState{};
+    const bool captureWindowViaMonitor = config.sourceType == "window";
     if (config.sourceType == "display") {
         HMONITOR monitor = findMonitorForCapture(
             config.displayId,
@@ -415,10 +418,17 @@ int main(int argc, char* argv[]) {
             std::cerr << "ERROR: Native window capture requires a valid HWND" << std::endl;
             return 1;
         }
-        if (!session.initialize(window, config.fps, config.captureCursor)) {
-            std::cerr << "ERROR: Failed to initialize WGC window session" << std::endl;
+        if (!initializeWindowCaptureState(window, windowCaptureState)) {
+            std::cerr << "ERROR: Could not resolve native window capture bounds" << std::endl;
             return 1;
         }
+        if (!session.initialize(windowCaptureState.monitor, config.fps, config.captureCursor)) {
+            std::cerr << "ERROR: Failed to initialize WGC monitor session for window capture" << std::endl;
+            return 1;
+        }
+        std::cout << "{\"event\":\"window-capture-mode\",\"schemaVersion\":2,\"mode\":\"monitor-crop\","
+                  << "\"width\":" << windowCaptureState.outputWidth
+                  << ",\"height\":" << windowCaptureState.outputHeight << "}" << std::endl;
     } else {
         std::cerr << "ERROR: Unsupported native capture source type: " << config.sourceType << std::endl;
         return 1;
@@ -427,8 +437,8 @@ int main(int argc, char* argv[]) {
     // WGC owns the captured texture size. Encoding must use that exact size
     // until a dedicated GPU scaling pass is introduced; CopyResource requires
     // matching resource dimensions.
-    int width = session.captureWidth();
-    int height = session.captureHeight();
+    int width = captureWindowViaMonitor ? windowCaptureState.outputWidth : session.captureWidth();
+    int height = captureWindowViaMonitor ? windowCaptureState.outputHeight : session.captureHeight();
     width = (std::max(2, width) / 2) * 2;
     height = (std::max(2, height) / 2) * 2;
 
@@ -556,6 +566,10 @@ int main(int argc, char* argv[]) {
         if (!latestFrameTexture) {
             D3D11_TEXTURE2D_DESC desc{};
             texture->GetDesc(&desc);
+            if (captureWindowViaMonitor) {
+                desc.Width = static_cast<UINT>(width);
+                desc.Height = static_cast<UINT>(height);
+            }
             desc.BindFlags = 0;
             desc.CPUAccessFlags = 0;
             desc.MiscFlags = 0;
@@ -567,7 +581,25 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        session.context()->CopyResource(latestFrameTexture.Get(), texture);
+        if (captureWindowViaMonitor) {
+            D3D11_TEXTURE2D_DESC monitorDesc{};
+            texture->GetDesc(&monitorDesc);
+            D3D11_BOX srcBox{};
+            if (!computeMonitorRelativeCropBox(windowCaptureState, monitorDesc, srcBox)) {
+                return;
+            }
+            session.context()->CopySubresourceRegion(
+                latestFrameTexture.Get(),
+                0,
+                0,
+                0,
+                0,
+                texture,
+                0,
+                &srcBox);
+        } else {
+            session.context()->CopyResource(latestFrameTexture.Get(), texture);
+        }
         latestFrameTimestampHns = timestampHns;
         if (!firstFrameWritten.exchange(true)) {
             control.cv.notify_all();
