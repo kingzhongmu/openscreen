@@ -216,6 +216,21 @@ export interface TrimRegion {
 
 export type AnnotationType = "text" | "image" | "figure" | "blur";
 
+export type AudioAnnotationSource = "import";
+
+export interface AudioAnnotationClip {
+	id: string;
+	anchorMs: number;
+	durationMs: number;
+	source: AudioAnnotationSource;
+	audioUrl: string;
+	fileName?: string;
+	sourceDurationMs?: number;
+	volume?: number;
+}
+
+export const DEFAULT_AUDIO_ANNOTATION_VOLUME = 1;
+
 export type ArrowDirection =
 	| "up"
 	| "down"

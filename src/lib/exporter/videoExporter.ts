@@ -49,6 +49,7 @@ export interface VideoExporterConfig extends ExportConfig {
 	cursorClipToBounds?: boolean;
 	cursorTheme?: string;
 	annotationRegions?: AnnotationRegion[];
+	audioAnnotationClips?: import("@/components/video-editor/types").AudioAnnotationClip[];
 	previewWidth?: number;
 	previewHeight?: number;
 	cursorTelemetry?: import("@/components/video-editor/types").CursorTelemetryPoint[];
@@ -270,15 +271,21 @@ export class VideoExporter {
 			await this.initializeEncoder(encoderPreference);
 
 			const sourceDemuxer = streamingDecoder.getDemuxer();
-			const audioExportCodec =
-				videoInfo.hasAudio && sourceDemuxer
+			const hasAnnotationAudio = (this.config.audioAnnotationClips?.length ?? 0) > 0;
+			const audioExportCodec = sourceDemuxer
+				? videoInfo.hasAudio
 					? await AudioProcessor.selectSupportedExportCodecForSource(sourceDemuxer)
+					: hasAnnotationAudio
+						? await AudioProcessor.selectSupportedExportCodec(48_000, 2)
+						: null
+				: hasAnnotationAudio
+					? await AudioProcessor.selectSupportedExportCodec(48_000, 2)
 					: null;
 			if (videoInfo.hasAudio && !audioExportCodec) {
 				console.warn("[VideoExporter] No supported audio export codec, exporting video-only.");
 			}
 
-			const hasAudio = Boolean(audioExportCodec);
+			const hasAudio = Boolean(audioExportCodec) && (videoInfo.hasAudio || hasAnnotationAudio);
 			const muxer = new VideoMuxer(this.config, hasAudio, audioExportCodec?.muxerCodec);
 			this.muxer = muxer;
 			await muxer.initialize();
@@ -464,20 +471,18 @@ export class VideoExporter {
 			});
 
 			if (hasAudio && audioExportCodec && !this.cancelled) {
-				const demuxer = streamingDecoder.getDemuxer();
-				if (demuxer) {
-					console.log("[VideoExporter] Processing audio track...");
-					this.audioProcessor = new AudioProcessor();
-					await this.audioProcessor.process(
-						demuxer,
-						muxer,
-						this.config.videoUrl,
-						this.config.trimRegions,
-						this.config.speedRegions,
-						videoInfo.duration,
-						audioExportCodec,
-					);
-				}
+				console.log("[VideoExporter] Processing audio track...");
+				this.audioProcessor = new AudioProcessor();
+				await this.audioProcessor.process(
+					sourceDemuxer ?? streamingDecoder.getDemuxer()!,
+					muxer,
+					this.config.videoUrl,
+					this.config.trimRegions,
+					this.config.speedRegions,
+					videoInfo.duration,
+					audioExportCodec,
+					this.config.audioAnnotationClips,
+				);
 			}
 
 			const blob = await muxer.finalize();

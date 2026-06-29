@@ -6,6 +6,7 @@ import {
 } from "@/components/video-editor/editorDefaults";
 import type {
 	AnnotationRegion,
+	AudioAnnotationClip,
 	CropRegion,
 	SpeedRegion,
 	TrimRegion,
@@ -34,6 +35,7 @@ export interface EditorState {
 	trimRegions: TrimRegion[];
 	speedRegions: SpeedRegion[];
 	annotationRegions: AnnotationRegion[];
+	audioAnnotationClips: AudioAnnotationClip[];
 	cropRegion: CropRegion;
 	wallpaper: string;
 	shadowIntensity: number;
@@ -58,6 +60,7 @@ export const INITIAL_EDITOR_STATE: EditorState = {
 	trimRegions: [],
 	speedRegions: [],
 	annotationRegions: [],
+	audioAnnotationClips: [],
 	cropRegion: DEFAULT_CROP_REGION,
 	wallpaper: DEFAULT_EDITOR_LAYOUT_SETTINGS.wallpaper,
 	shadowIntensity: DEFAULT_EDITOR_APPEARANCE_SETTINGS.shadowIntensity,

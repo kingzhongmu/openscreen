@@ -125,6 +125,7 @@ interface VideoPlaybackProps {
 	aspectRatio: AspectRatio;
 	cursorRecordingData?: CursorRecordingData | null;
 	annotationRegions?: AnnotationRegion[];
+	audioAnnotationClips?: import("./types").AudioAnnotationClip[];
 	selectedAnnotationId?: string | null;
 	onSelectAnnotation?: (id: string | null) => void;
 	onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
@@ -253,6 +254,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			aspectRatio,
 			cursorRecordingData,
 			annotationRegions = [],
+			audioAnnotationClips = [],
 			selectedAnnotationId,
 			onSelectAnnotation,
 			onAnnotationPositionChange,
@@ -280,6 +282,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 	) => {
 		const videoRef = useRef<HTMLVideoElement | null>(null);
 		const supplementalAudioRef = useRef<HTMLAudioElement | null>(null);
+		const clipAudioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
 		const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
 		const webcamWrapperRef = useRef<HTMLDivElement | null>(null);
 		const webcamReactiveZoomRef = useRef(webcamReactiveZoom);
@@ -1156,6 +1159,68 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				// Keep video playback running even if supplemental preview audio is unavailable.
 			});
 		}, [currentTime, isPlaying, speedRegions, supplementalAudioPath]);
+
+		useEffect(() => {
+			const map = clipAudioRefs.current;
+			const activeIds = new Set(audioAnnotationClips.map((clip) => clip.id));
+
+			for (const [id, element] of map) {
+				if (!activeIds.has(id)) {
+					element.pause();
+					element.src = "";
+					map.delete(id);
+				}
+			}
+
+			for (const clip of audioAnnotationClips) {
+				let element = map.get(clip.id);
+				if (!element) {
+					element = document.createElement("audio");
+					element.preload = "auto";
+					map.set(clip.id, element);
+				}
+				if (element.src !== clip.audioUrl) {
+					element.src = clip.audioUrl;
+				}
+				element.volume = clip.volume ?? 1;
+			}
+		}, [audioAnnotationClips]);
+
+		useEffect(() => {
+			const timeMs = currentTime * 1000;
+
+			for (const clip of audioAnnotationClips) {
+				const element = clipAudioRefs.current.get(clip.id);
+				if (!element) {
+					continue;
+				}
+
+				const inRange = timeMs >= clip.anchorMs && timeMs < clip.anchorMs + clip.durationMs;
+				const offsetSec = (timeMs - clip.anchorMs) / 1000;
+
+				if (!inRange) {
+					if (!element.paused) {
+						element.pause();
+					}
+					continue;
+				}
+
+				if (!isPlaying) {
+					element.pause();
+					if (Math.abs(element.currentTime - offsetSec) > 0.05) {
+						element.currentTime = offsetSec;
+					}
+					continue;
+				}
+
+				if (Math.abs(element.currentTime - offsetSec) > 0.15) {
+					element.currentTime = offsetSec;
+				}
+				element.play().catch(() => {
+					// Preview audio is best-effort; keep video playback running.
+				});
+			}
+		}, [audioAnnotationClips, currentTime, isPlaying]);
 
 		useEffect(() => {
 			if (!pixiReady || !videoReady) return;

@@ -31,6 +31,11 @@ import {
 	saveAnnotationTextStylePreset,
 } from "@/lib/annotationPreferences";
 import {
+	buildAudioAnnotationClip,
+	getAudioFileDurationMs,
+	isAcceptedAudioAnnotationFile,
+} from "@/lib/audioAnnotation";
+import {
 	captionSegmentsToAnnotationRegions,
 	extractMono16kFromVideoUrl,
 	MAX_CAPTION_AUDIO_SEC,
@@ -201,6 +206,7 @@ export default function VideoEditor() {
 		trimRegions,
 		speedRegions,
 		annotationRegions,
+		audioAnnotationClips,
 		cropRegion,
 		wallpaper,
 		shadowIntensity,
@@ -238,6 +244,7 @@ export default function VideoEditor() {
 	const [selectedTrimId, setSelectedTrimId] = useState<string | null>(null);
 	const [selectedSpeedId, setSelectedSpeedId] = useState<string | null>(null);
 	const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+	const [selectedAudioAnnotationId, setSelectedAudioAnnotationId] = useState<string | null>(null);
 	const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
 	const [isExporting, setIsExporting] = useState(false);
 	const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
@@ -323,6 +330,8 @@ export default function VideoEditor() {
 	const availableLocales = getAvailableLocales();
 
 	const nextAnnotationIdRef = useRef(1);
+	const nextAudioAnnotationIdRef = useRef(1);
+	const audioImportInputRef = useRef<HTMLInputElement | null>(null);
 	const nextAnnotationZIndexRef = useRef(1);
 	const isAutoCaptioningRef = useRef(false);
 	const [isAutoCaptioning, setIsAutoCaptioning] = useState(false);
@@ -382,6 +391,7 @@ export default function VideoEditor() {
 				...normalizedEditor.trimRegions.map((region) => region.endMs),
 				...normalizedEditor.speedRegions.map((region) => region.endMs),
 				...normalizedEditor.annotationRegions.map((region) => region.endMs),
+				...normalizedEditor.audioAnnotationClips.map((clip) => clip.anchorMs + clip.durationMs),
 			);
 
 			try {
@@ -420,6 +430,7 @@ export default function VideoEditor() {
 				trimRegions: normalizedEditor.trimRegions,
 				speedRegions: normalizedEditor.speedRegions,
 				annotationRegions: normalizedEditor.annotationRegions,
+				audioAnnotationClips: normalizedEditor.audioAnnotationClips,
 				aspectRatio: normalizedEditor.aspectRatio,
 				webcamLayoutPreset: normalizedEditor.webcamLayoutPreset,
 				webcamMaskShape: normalizedEditor.webcamMaskShape,
@@ -439,6 +450,7 @@ export default function VideoEditor() {
 			setSelectedTrimId(null);
 			setSelectedSpeedId(null);
 			setSelectedAnnotationId(null);
+			setSelectedAudioAnnotationId(null);
 			setSelectedBlurId(null);
 
 			nextZoomIdRef.current = deriveNextId(
@@ -456,6 +468,10 @@ export default function VideoEditor() {
 			nextAnnotationIdRef.current = deriveNextId(
 				"annotation",
 				normalizedEditor.annotationRegions.map((region) => region.id),
+			);
+			nextAudioAnnotationIdRef.current = deriveNextId(
+				"audio-annotation",
+				normalizedEditor.audioAnnotationClips.map((clip) => clip.id),
 			);
 			nextAnnotationZIndexRef.current =
 				normalizedEditor.annotationRegions.reduce(
@@ -497,6 +513,7 @@ export default function VideoEditor() {
 			trimRegions,
 			speedRegions,
 			annotationRegions,
+			audioAnnotationClips,
 			aspectRatio,
 			webcamLayoutPreset,
 			webcamMaskShape,
@@ -528,6 +545,7 @@ export default function VideoEditor() {
 		trimRegions,
 		speedRegions,
 		annotationRegions,
+		audioAnnotationClips,
 		aspectRatio,
 		webcamLayoutPreset,
 		webcamMaskShape,
@@ -656,6 +674,7 @@ export default function VideoEditor() {
 				trimRegions,
 				speedRegions,
 				annotationRegions,
+				audioAnnotationClips,
 				aspectRatio,
 				webcamLayoutPreset,
 				webcamMaskShape,
@@ -721,6 +740,7 @@ export default function VideoEditor() {
 			trimRegions,
 			speedRegions,
 			annotationRegions,
+			audioAnnotationClips,
 			aspectRatio,
 			webcamLayoutPreset,
 			webcamMaskShape,
@@ -856,7 +876,9 @@ export default function VideoEditor() {
 		setSelectedTrimId(null);
 		setSelectedSpeedId(null);
 		setSelectedAnnotationId(null);
+		setSelectedAudioAnnotationId(null);
 		setSelectedBlurId(null);
+		setSelectedAudioAnnotationId(null);
 		// Reset playback.
 		setCurrentTime(0);
 		setIsPlaying(false);
@@ -874,6 +896,7 @@ export default function VideoEditor() {
 		nextSpeedIdRef.current = 1;
 		nextAnnotationIdRef.current = 1;
 		nextAnnotationZIndexRef.current = 1;
+		nextAudioAnnotationIdRef.current = 1;
 	}, [resetState]);
 
 	const handleNewProject = useCallback(async () => {
@@ -1004,6 +1027,7 @@ export default function VideoEditor() {
 			setSelectedTrimId(null);
 			setSelectedSpeedId(null);
 			setSelectedBlurId(null);
+			setSelectedAudioAnnotationId(null);
 		}
 	}, []);
 
@@ -1397,6 +1421,7 @@ export default function VideoEditor() {
 			setSelectedZoomId(null);
 			setSelectedTrimId(null);
 			setSelectedSpeedId(null);
+			setSelectedAudioAnnotationId(null);
 
 			if (options?.pausePlayback !== false) {
 				setIsPlaying(false);
@@ -1461,6 +1486,155 @@ export default function VideoEditor() {
 		},
 		[pushState],
 	);
+
+	const handleAudioImportRequest = useCallback(() => {
+		audioImportInputRef.current?.click();
+	}, []);
+
+	const handleAudioFileSelected = useCallback(
+		async (event: React.ChangeEvent<HTMLInputElement>) => {
+			const file = event.target.files?.[0];
+			event.target.value = "";
+			if (!file) {
+				return;
+			}
+
+			if (!isAcceptedAudioAnnotationFile(file)) {
+				toast.error(t("audioAnnotation.invalidFileType"));
+				return;
+			}
+
+			const totalMs = Math.round(durationRef.current * 1000);
+			if (totalMs <= 0) {
+				return;
+			}
+
+			try {
+				const audioUrl = URL.createObjectURL(file);
+				const sourceDurationMs = await getAudioFileDurationMs(audioUrl);
+				const id = `audio-annotation-${nextAudioAnnotationIdRef.current++}`;
+				const clip = buildAudioAnnotationClip(
+					id,
+					Math.round(currentTime * 1000),
+					audioUrl,
+					sourceDurationMs,
+					file.name,
+					totalMs,
+				);
+				if (!clip) {
+					URL.revokeObjectURL(audioUrl);
+					return;
+				}
+
+				pushState((prev) => ({
+					audioAnnotationClips: [...prev.audioAnnotationClips, clip],
+				}));
+				setSelectedAudioAnnotationId(id);
+				setSelectedAnnotationId(null);
+				setSelectedBlurId(null);
+				setSelectedZoomId(null);
+				setSelectedTrimId(null);
+				setSelectedSpeedId(null);
+				setIsPlaying(false);
+			} catch {
+				toast.error(t("audioAnnotation.failedToLoad"));
+			}
+		},
+		[currentTime, pushState, t],
+	);
+
+	const handleAudioAnnotationSpanChange = useCallback(
+		(id: string, span: Span) => {
+			const durationMs = Math.max(1, Math.round(span.end - span.start));
+			pushState((prev) => ({
+				audioAnnotationClips: prev.audioAnnotationClips.map((clip) =>
+					clip.id === id
+						? {
+								...clip,
+								anchorMs: Math.round(span.start),
+								durationMs,
+							}
+						: clip,
+				),
+			}));
+		},
+		[pushState],
+	);
+
+	const handleAudioAnnotationDurationChange = useCallback(
+		(id: string, durationMs: number) => {
+			const totalMs = Math.round(durationRef.current * 1000);
+			pushState((prev) => ({
+				audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
+					if (clip.id !== id) {
+						return clip;
+					}
+					const maxDuration = Math.max(500, totalMs - clip.anchorMs);
+					return {
+						...clip,
+						durationMs: Math.max(500, Math.min(durationMs, maxDuration, 30_000)),
+					};
+				}),
+			}));
+		},
+		[pushState],
+	);
+
+	const handleAudioAnnotationVolumeChange = useCallback(
+		(id: string, volume: number) => {
+			pushState((prev) => ({
+				audioAnnotationClips: prev.audioAnnotationClips.map((clip) =>
+					clip.id === id ? { ...clip, volume } : clip,
+				),
+			}));
+		},
+		[pushState],
+	);
+
+	const handleAudioAnnotationReplace = useCallback(
+		(id: string, audioUrl: string, fileName: string, sourceDurationMs: number) => {
+			const totalMs = Math.round(durationRef.current * 1000);
+			pushState((prev) => ({
+				audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
+					if (clip.id !== id) {
+						return clip;
+					}
+					const maxDuration = Math.max(500, totalMs - clip.anchorMs);
+					return {
+						...clip,
+						audioUrl,
+						fileName,
+						sourceDurationMs,
+						durationMs: Math.min(clip.durationMs, sourceDurationMs, maxDuration, 30_000),
+					};
+				}),
+			}));
+		},
+		[pushState],
+	);
+
+	const handleAudioAnnotationDelete = useCallback(
+		(id: string) => {
+			pushState((prev) => ({
+				audioAnnotationClips: prev.audioAnnotationClips.filter((clip) => clip.id !== id),
+			}));
+			if (selectedAudioAnnotationId === id) {
+				setSelectedAudioAnnotationId(null);
+			}
+		},
+		[selectedAudioAnnotationId, pushState],
+	);
+
+	const handleSelectAudioAnnotation = useCallback((id: string | null) => {
+		setSelectedAudioAnnotationId(id);
+		if (id) {
+			setSelectedAnnotationId(null);
+			setSelectedBlurId(null);
+			setSelectedZoomId(null);
+			setSelectedTrimId(null);
+			setSelectedSpeedId(null);
+		}
+	}, []);
 
 	const handleAnnotationDuplicate = useCallback(
 		(id: string) => {
@@ -2048,6 +2222,7 @@ export default function VideoEditor() {
 						cursorClipToBounds,
 						cursorTheme,
 						annotationRegions,
+						audioAnnotationClips,
 						webcamLayoutPreset,
 						webcamMaskShape,
 						webcamMirrored,
@@ -2149,6 +2324,7 @@ export default function VideoEditor() {
 			cropRegion,
 			cursorRecordingData,
 			annotationRegions,
+			audioAnnotationClips,
 			isPlaying,
 			aspectRatio,
 			webcamLayoutPreset,
@@ -2668,6 +2844,7 @@ export default function VideoEditor() {
 													trimRegions={trimRegions}
 													speedRegions={speedRegions}
 													annotationRegions={annotationOnlyRegions}
+													audioAnnotationClips={audioAnnotationClips}
 													selectedAnnotationId={selectedAnnotationId}
 													onSelectAnnotation={handleSelectAnnotation}
 													onAnnotationPositionChange={handleAnnotationPositionChange}
@@ -2709,6 +2886,14 @@ export default function VideoEditor() {
 											<AddPositionAnnotationMenu
 												disabled={!videoPath || duration <= 0}
 												onAdd={({ type }) => handlePositionAnnotationAdded(type)}
+												onImportAudio={handleAudioImportRequest}
+											/>
+											<input
+												ref={audioImportInputRef}
+												type="file"
+												accept=".mp3,.wav,audio/mpeg,audio/wav"
+												className="hidden"
+												onChange={handleAudioFileSelected}
 											/>
 										</div>
 									</div>
@@ -2854,6 +3039,12 @@ export default function VideoEditor() {
 										onAnnotationDelete={handleAnnotationDelete}
 										videoDurationMs={Math.round(duration * 1000)}
 										onAnnotationDurationChange={handleAnnotationDurationChange}
+										selectedAudioAnnotationId={selectedAudioAnnotationId}
+										audioAnnotationClips={audioAnnotationClips}
+										onAudioAnnotationVolumeChange={handleAudioAnnotationVolumeChange}
+										onAudioAnnotationDurationChange={handleAudioAnnotationDurationChange}
+										onAudioAnnotationReplace={handleAudioAnnotationReplace}
+										onAudioAnnotationDelete={handleAudioAnnotationDelete}
 										selectedBlurId={selectedBlurId}
 										blurRegions={blurRegions}
 										onBlurDataChange={handleBlurDataPanelChange}
@@ -2933,6 +3124,12 @@ export default function VideoEditor() {
 									onAnnotationDelete={handleAnnotationDelete}
 									selectedAnnotationId={selectedAnnotationId}
 									onSelectAnnotation={handleSelectAnnotation}
+									audioAnnotationClips={audioAnnotationClips}
+									onAudioAnnotationSpanChange={handleAudioAnnotationSpanChange}
+									onAudioAnnotationDelete={handleAudioAnnotationDelete}
+									selectedAudioAnnotationId={selectedAudioAnnotationId}
+									onSelectAudioAnnotation={handleSelectAudioAnnotation}
+									onImportAudio={handleAudioImportRequest}
 									blurRegions={blurRegions}
 									onBlurSpanChange={handleAnnotationSpanChange}
 									onBlurDelete={handleAnnotationDelete}

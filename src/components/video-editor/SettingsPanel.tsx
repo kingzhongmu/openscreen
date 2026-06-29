@@ -57,6 +57,7 @@ import { type AspectRatio, isPortraitAspectRatio } from "@/utils/aspectRatioUtil
 import { getTestId } from "@/utils/getTestId";
 import ColorPicker from "../ui/color-picker";
 import { AnnotationSettingsPanel } from "./AnnotationSettingsPanel";
+import { AudioAnnotationSettingsPanel } from "./AudioAnnotationSettingsPanel";
 import { BlurSettingsPanel } from "./BlurSettingsPanel";
 import { BACKGROUND_IMAGE_ACCEPT, isSupportedBackgroundImageType } from "./backgroundImageUpload";
 import { CropControl } from "./CropControl";
@@ -74,6 +75,7 @@ import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import type {
 	AnnotationRegion,
 	AnnotationType,
+	AudioAnnotationClip,
 	BlurData,
 	CropRegion,
 	FigureData,
@@ -312,6 +314,17 @@ interface SettingsPanelProps {
 	onAnnotationDelete?: (id: string) => void;
 	videoDurationMs?: number;
 	onAnnotationDurationChange?: (id: string, durationMs: number) => void;
+	selectedAudioAnnotationId?: string | null;
+	audioAnnotationClips?: AudioAnnotationClip[];
+	onAudioAnnotationVolumeChange?: (id: string, volume: number) => void;
+	onAudioAnnotationDurationChange?: (id: string, durationMs: number) => void;
+	onAudioAnnotationReplace?: (
+		id: string,
+		audioUrl: string,
+		fileName: string,
+		sourceDurationMs: number,
+	) => void;
+	onAudioAnnotationDelete?: (id: string) => void;
 	selectedBlurId?: string | null;
 	blurRegions?: AnnotationRegion[];
 	onBlurDataChange?: (id: string, blurData: BlurData) => void;
@@ -450,6 +463,12 @@ export function SettingsPanel({
 	onAnnotationDelete,
 	videoDurationMs,
 	onAnnotationDurationChange,
+	selectedAudioAnnotationId,
+	audioAnnotationClips = [],
+	onAudioAnnotationVolumeChange,
+	onAudioAnnotationDurationChange,
+	onAudioAnnotationReplace,
+	onAudioAnnotationDelete,
 	selectedBlurId,
 	blurRegions = [],
 	onBlurDataChange,
@@ -741,6 +760,9 @@ export function SettingsPanel({
 	const selectedAnnotation = selectedAnnotationId
 		? annotationRegions.find((a) => a.id === selectedAnnotationId)
 		: null;
+	const selectedAudioAnnotation = selectedAudioAnnotationId
+		? audioAnnotationClips.find((clip) => clip.id === selectedAudioAnnotationId)
+		: null;
 	const selectedBlur = selectedBlurId
 		? blurRegions.find((region) => region.id === selectedBlurId)
 		: null;
@@ -780,6 +802,44 @@ export function SettingsPanel({
 			</button>
 		</div>
 	);
+
+	// Audio annotation selected: show its settings panel.
+	if (selectedAudioAnnotation && onAudioAnnotationVolumeChange && onAudioAnnotationDelete) {
+		return (
+			<div className="editor-inspector-shell flex min-w-0 flex-col h-full overflow-hidden">
+				<div className="min-h-0 flex-1 overflow-hidden">
+					<AudioAnnotationSettingsPanel
+						clip={selectedAudioAnnotation}
+						videoDurationMs={videoDurationMs}
+						onVolumeChange={(volume) =>
+							onAudioAnnotationVolumeChange(selectedAudioAnnotation.id, volume)
+						}
+						onDurationChange={
+							onAudioAnnotationDurationChange
+								? (durationMs) =>
+										onAudioAnnotationDurationChange(selectedAudioAnnotation.id, durationMs)
+								: undefined
+						}
+						onReplaceAudio={
+							onAudioAnnotationReplace
+								? (audioUrl, fileName, sourceDurationMs) =>
+										onAudioAnnotationReplace(
+											selectedAudioAnnotation.id,
+											audioUrl,
+											fileName,
+											sourceDurationMs,
+										)
+								: undefined
+						}
+						onDelete={() => onAudioAnnotationDelete(selectedAudioAnnotation.id)}
+					/>
+				</div>
+				<div className="flex-shrink-0 p-3 border-t border-white/[0.07] bg-black/25">
+					{commonFooterLinks}
+				</div>
+			</div>
+		);
+	}
 
 	// Annotation selected: show its settings panel instead.
 	if (

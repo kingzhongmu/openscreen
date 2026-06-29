@@ -83,6 +83,10 @@
 		"typeText": "Text",
 		"typeArrow": "Arrow",
 		"typeImage": "Image",
-		"typeBlur": "Blur"
+		"typeAudio": "Audio Narration"
+	},
+	"audioAnnotation": {
+		"invalidFileType": "Please upload an MP3 or WAV file.",
+		"failedToLoad": "Failed to load audio file"
 	}
 }

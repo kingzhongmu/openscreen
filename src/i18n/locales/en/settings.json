@@ -177,6 +177,17 @@
 		"imageUploadSuccess": "Image uploaded successfully!",
 		"failedImageUpload": "Failed to upload image"
 	},
+	"audioAnnotation": {
+		"title": "Audio Narration",
+		"active": "Active",
+		"fileName": "File",
+		"untitled": "Untitled audio",
+		"replaceFile": "Replace Audio",
+		"volume": "Volume",
+		"delete": "Delete Audio",
+		"invalidFileType": "Invalid file type",
+		"failedToLoad": "Failed to load audio file"
+	},
 	"fontStyles": {
 		"classic": "Classic",
 		"editor": "Editor",

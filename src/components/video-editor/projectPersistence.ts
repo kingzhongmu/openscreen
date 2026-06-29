@@ -16,6 +16,7 @@ import {
 } from "./editorDefaults";
 import {
 	type AnnotationRegion,
+	type AudioAnnotationClip,
 	type CropRegion,
 	clampPlaybackSpeed,
 	DEFAULT_ANNOTATION_POSITION,
@@ -63,7 +64,7 @@ function normalizeWallpaperValue(value: string): string {
 	return CANONICAL_WALLPAPERS.has(canonical) ? canonical : DEFAULT_WALLPAPER;
 }
 
-export const PROJECT_VERSION = 2;
+export const PROJECT_VERSION = 3;
 
 export interface ProjectEditorState {
 	wallpaper: string;
@@ -80,6 +81,7 @@ export interface ProjectEditorState {
 	trimRegions: TrimRegion[];
 	speedRegions: SpeedRegion[];
 	annotationRegions: AnnotationRegion[];
+	audioAnnotationClips: AudioAnnotationClip[];
 	aspectRatio: AspectRatio;
 	webcamLayoutPreset: WebcamLayoutPreset;
 	webcamMaskShape: WebcamMaskShape;
@@ -313,6 +315,37 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 				})
 		: [];
 
+	const normalizedAudioAnnotationClips: AudioAnnotationClip[] = Array.isArray(
+		editor.audioAnnotationClips,
+	)
+		? editor.audioAnnotationClips
+				.filter((clip): clip is AudioAnnotationClip =>
+					Boolean(clip && typeof clip.id === "string" && typeof clip.audioUrl === "string"),
+				)
+				.map((clip) => {
+					const anchorMs = isFiniteNumber(clip.anchorMs)
+						? Math.max(0, Math.round(clip.anchorMs))
+						: 0;
+					const rawDuration = isFiniteNumber(clip.durationMs) ? Math.round(clip.durationMs) : 3000;
+					const durationMs = Math.max(500, Math.min(30_000, rawDuration));
+					const volume =
+						isFiniteNumber(clip.volume) && clip.volume >= 0 && clip.volume <= 1 ? clip.volume : 1;
+
+					return {
+						id: clip.id,
+						anchorMs,
+						durationMs,
+						source: "import" as const,
+						audioUrl: clip.audioUrl,
+						fileName: typeof clip.fileName === "string" ? clip.fileName : undefined,
+						sourceDurationMs: isFiniteNumber(clip.sourceDurationMs)
+							? Math.max(1, Math.round(clip.sourceDurationMs))
+							: undefined,
+						volume,
+					};
+				})
+		: [];
+
 	const normalizedAnnotationRegions: AnnotationRegion[] = Array.isArray(editor.annotationRegions)
 		? editor.annotationRegions
 				.filter((region): region is AnnotationRegion =>
@@ -493,6 +526,7 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 		trimRegions: normalizedTrimRegions,
 		speedRegions: normalizedSpeedRegions,
 		annotationRegions: normalizedAnnotationRegions,
+		audioAnnotationClips: normalizedAudioAnnotationClips,
 		aspectRatio: normalizedAspectRatio,
 		webcamLayoutPreset: normalizedWebcamLayoutPreset,
 		webcamMaskShape:

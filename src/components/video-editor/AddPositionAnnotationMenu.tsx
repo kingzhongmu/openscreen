@@ -1,4 +1,4 @@
-import { ChevronDown, Image as ImageIcon, MessageSquarePlus, Type } from "lucide-react";
+import { ChevronDown, Image as ImageIcon, MessageSquarePlus, Mic, Type } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +19,7 @@ export interface PositionAnnotationAddRequest {
 interface AddPositionAnnotationMenuProps {
 	disabled?: boolean;
 	onAdd: (request: PositionAnnotationAddRequest) => void;
+	onImportAudio?: () => void;
 	/** Compact icon-only trigger (timeline toolbar). */
 	variant?: "default" | "icon";
 	className?: string;
@@ -57,6 +58,7 @@ function BlurMenuIcon({ className }: { className?: string }) {
 export function AddPositionAnnotationMenu({
 	disabled = false,
 	onAdd,
+	onImportAudio,
 	variant = "default",
 	className,
 }: AddPositionAnnotationMenuProps) {
@@ -127,6 +129,15 @@ export function AddPositionAnnotationMenu({
 						<span>{item.label}</span>
 					</DropdownMenuItem>
 				))}
+				{onImportAudio && (
+					<DropdownMenuItem
+						onClick={onImportAudio}
+						className="text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer gap-2"
+					>
+						<Mic className="w-4 h-4" />
+						<span>{t("positionAnnotation.typeAudio")}</span>
+					</DropdownMenuItem>
+				)}
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);

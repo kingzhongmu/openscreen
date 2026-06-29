@@ -33,6 +33,7 @@ import { BLUR_REGIONS_ENABLED } from "../featureFlags";
 import type {
 	AnnotationRegion,
 	AnnotationType,
+	AudioAnnotationClip,
 	SpeedRegion,
 	TrimRegion,
 	ZoomRegion,
@@ -46,6 +47,7 @@ import TimelineWrapper from "./TimelineWrapper";
 const ZOOM_ROW_ID = "row-zoom";
 const TRIM_ROW_ID = "row-trim";
 const ANNOTATION_ROW_ID = "row-annotation";
+const AUDIO_ANNOTATION_ROW_ID = "row-audio-annotation";
 const BLUR_ROW_ID = "row-blur";
 const SPEED_ROW_ID = "row-speed";
 const FALLBACK_RANGE_MS = 1000;
@@ -80,6 +82,12 @@ interface TimelineEditorProps {
 	onAnnotationDelete?: (id: string) => void;
 	selectedAnnotationId?: string | null;
 	onSelectAnnotation?: (id: string | null) => void;
+	audioAnnotationClips?: AudioAnnotationClip[];
+	onAudioAnnotationSpanChange?: (id: string, span: Span) => void;
+	onAudioAnnotationDelete?: (id: string) => void;
+	selectedAudioAnnotationId?: string | null;
+	onSelectAudioAnnotation?: (id: string | null) => void;
+	onImportAudio?: () => void;
 	blurRegions?: AnnotationRegion[];
 	onBlurSpanChange?: (id: string, span: Span) => void;
 	onBlurDelete?: (id: string) => void;
@@ -117,7 +125,7 @@ interface TimelineRenderItem {
 	zoomCustomScale?: number;
 	speedValue?: number;
 	isAutoFocus?: boolean;
-	variant: "zoom" | "trim" | "annotation" | "speed" | "blur";
+	variant: "zoom" | "trim" | "annotation" | "speed" | "blur" | "audio";
 }
 
 const SCALE_CANDIDATES = [
@@ -566,11 +574,13 @@ function Timeline({
 	onSelectZoom,
 	onSelectTrim,
 	onSelectAnnotation,
+	onSelectAudioAnnotation,
 	onSelectBlur,
 	onSelectSpeed,
 	selectedZoomId,
 	selectedTrimId,
 	selectedAnnotationId,
+	selectedAudioAnnotationId,
 	selectedBlurId,
 	selectedSpeedId,
 	keyframes = [],
@@ -585,11 +595,13 @@ function Timeline({
 	onSelectZoom?: (id: string | null) => void;
 	onSelectTrim?: (id: string | null) => void;
 	onSelectAnnotation?: (id: string | null) => void;
+	onSelectAudioAnnotation?: (id: string | null) => void;
 	onSelectBlur?: (id: string | null) => void;
 	onSelectSpeed?: (id: string | null) => void;
 	selectedZoomId: string | null;
 	selectedTrimId?: string | null;
 	selectedAnnotationId?: string | null;
+	selectedAudioAnnotationId?: string | null;
 	selectedBlurId?: string | null;
 	selectedSpeedId?: string | null;
 	keyframes?: { id: string; time: number }[];
@@ -752,6 +764,7 @@ function Timeline({
 	const zoomItems = items.filter((item) => item.rowId === ZOOM_ROW_ID);
 	const trimItems = items.filter((item) => item.rowId === TRIM_ROW_ID);
 	const annotationItems = items.filter((item) => item.rowId === ANNOTATION_ROW_ID);
+	const audioAnnotationItems = items.filter((item) => item.rowId === AUDIO_ANNOTATION_ROW_ID);
 	const blurItems = items.filter((item) => item.rowId === BLUR_ROW_ID);
 	const speedItems = items.filter((item) => item.rowId === SPEED_ROW_ID);
 
@@ -849,6 +862,26 @@ function Timeline({
 				))}
 			</Row>
 
+			<Row
+				id={AUDIO_ANNOTATION_ROW_ID}
+				isEmpty={audioAnnotationItems.length === 0}
+				hint={t("hints.pressAudioAnnotation")}
+			>
+				{audioAnnotationItems.map((item) => (
+					<Item
+						id={item.id}
+						key={item.id}
+						rowId={item.rowId}
+						span={item.span}
+						isSelected={item.id === selectedAudioAnnotationId}
+						onSelect={() => onSelectAudioAnnotation?.(item.id)}
+						variant="audio"
+					>
+						{item.label}
+					</Item>
+				))}
+			</Row>
+
 			{BLUR_REGIONS_ENABLED && (
 				<Row id={BLUR_ROW_ID} isEmpty={blurItems.length === 0} hint={t("hints.pressBlur")}>
 					{blurItems.map((item) => (
@@ -914,6 +947,12 @@ export default function TimelineEditor({
 	onAnnotationDelete,
 	selectedAnnotationId,
 	onSelectAnnotation,
+	audioAnnotationClips = [],
+	onAudioAnnotationSpanChange,
+	onAudioAnnotationDelete,
+	selectedAudioAnnotationId,
+	onSelectAudioAnnotation,
+	onImportAudio,
 	blurRegions = [],
 	onBlurSpanChange,
 	onBlurDelete,
@@ -1002,6 +1041,14 @@ export default function TimelineEditor({
 		onAnnotationDelete(selectedAnnotationId);
 		onSelectAnnotation(null);
 	}, [selectedAnnotationId, onAnnotationDelete, onSelectAnnotation]);
+
+	const deleteSelectedAudioAnnotation = useCallback(() => {
+		if (!selectedAudioAnnotationId || !onAudioAnnotationDelete || !onSelectAudioAnnotation) {
+			return;
+		}
+		onAudioAnnotationDelete(selectedAudioAnnotationId);
+		onSelectAudioAnnotation(null);
+	}, [selectedAudioAnnotationId, onAudioAnnotationDelete, onSelectAudioAnnotation]);
 
 	const deleteSelectedBlur = useCallback(() => {
 		if (!selectedBlurId || !onBlurDelete || !onSelectBlur) return;
@@ -1278,6 +1325,8 @@ export default function TimelineEditor({
 					deleteSelectedTrim();
 				} else if (selectedAnnotationId) {
 					deleteSelectedAnnotation();
+				} else if (selectedAudioAnnotationId) {
+					deleteSelectedAudioAnnotation();
 				} else if (selectedBlurId) {
 					deleteSelectedBlur();
 				} else if (selectedSpeedId) {
@@ -1297,12 +1346,14 @@ export default function TimelineEditor({
 		deleteSelectedZoom,
 		deleteSelectedTrim,
 		deleteSelectedAnnotation,
+		deleteSelectedAudioAnnotation,
 		deleteSelectedBlur,
 		deleteSelectedSpeed,
 		selectedKeyframeId,
 		selectedZoomId,
 		selectedTrimId,
 		selectedAnnotationId,
+		selectedAudioAnnotationId,
 		selectedBlurId,
 		selectedSpeedId,
 		annotationRegions,
@@ -1364,6 +1415,18 @@ export default function TimelineEditor({
 			};
 		});
 
+		const audioAnnotations: TimelineRenderItem[] = audioAnnotationClips.map((clip, index) => ({
+			id: clip.id,
+			rowId: AUDIO_ANNOTATION_ROW_ID,
+			span: { start: clip.anchorMs, end: clip.anchorMs + clip.durationMs },
+			label: clip.fileName
+				? clip.fileName.length > 20
+					? `${clip.fileName.substring(0, 20)}...`
+					: clip.fileName
+				: t("labels.audioAnnotationItem", { index: String(index + 1) }),
+			variant: "audio",
+		}));
+
 		const blurs: TimelineRenderItem[] = blurRegions.map((region, index) => ({
 			id: region.id,
 			rowId: BLUR_ROW_ID,
@@ -1381,8 +1444,16 @@ export default function TimelineEditor({
 			variant: "speed",
 		}));
 
-		return [...zooms, ...trims, ...annotations, ...blurs, ...speeds];
-	}, [zoomRegions, trimRegions, annotationRegions, blurRegions, speedRegions, t]);
+		return [...zooms, ...trims, ...annotations, ...audioAnnotations, ...blurs, ...speeds];
+	}, [
+		zoomRegions,
+		trimRegions,
+		annotationRegions,
+		audioAnnotationClips,
+		blurRegions,
+		speedRegions,
+		t,
+	]);
 
 	// Spans that participate in overlap resolution (clampToNeighbours). Annotation
 	// and blur are excluded since they may overlap and shouldn't constrain a drag.
@@ -1400,9 +1471,14 @@ export default function TimelineEditor({
 			start: r.startMs,
 			end: r.endMs,
 		}));
+		const audioAnnotations = audioAnnotationClips.map((clip) => ({
+			id: clip.id,
+			start: clip.anchorMs,
+			end: clip.anchorMs + clip.durationMs,
+		}));
 		const blurs = blurRegions.map((r) => ({ id: r.id, start: r.startMs, end: r.endMs }));
-		return [...annotations, ...blurs];
-	}, [annotationRegions, blurRegions]);
+		return [...annotations, ...audioAnnotations, ...blurs];
+	}, [annotationRegions, audioAnnotationClips, blurRegions]);
 
 	const keyframeTimesMs = useMemo(() => keyframes.map((kf) => kf.time), [keyframes]);
 
@@ -1416,6 +1492,8 @@ export default function TimelineEditor({
 				onSpeedSpanChange?.(id, span);
 			} else if (annotationRegions.some((r) => r.id === id)) {
 				onAnnotationSpanChange?.(id, span);
+			} else if (audioAnnotationClips.some((clip) => clip.id === id)) {
+				onAudioAnnotationSpanChange?.(id, span);
 			} else if (blurRegions.some((r) => r.id === id)) {
 				onBlurSpanChange?.(id, span);
 			}
@@ -1425,11 +1503,13 @@ export default function TimelineEditor({
 			trimRegions,
 			speedRegions,
 			annotationRegions,
+			audioAnnotationClips,
 			blurRegions,
 			onZoomSpanChange,
 			onTrimSpanChange,
 			onSpeedSpanChange,
 			onAnnotationSpanChange,
+			onAudioAnnotationSpanChange,
 			onBlurSpanChange,
 		],
 	);
@@ -1506,6 +1586,7 @@ export default function TimelineEditor({
 						disabled={!videoDuration || videoDuration === 0}
 						variant="icon"
 						onAdd={({ type }) => handleAddAnnotation(type)}
+						onImportAudio={onImportAudio}
 					/>
 					<Button
 						onClick={handleAddSpeed}
@@ -1606,11 +1687,13 @@ export default function TimelineEditor({
 						onSelectZoom={onSelectZoom}
 						onSelectTrim={onSelectTrim}
 						onSelectAnnotation={onSelectAnnotation}
+						onSelectAudioAnnotation={onSelectAudioAnnotation}
 						onSelectBlur={onSelectBlur}
 						onSelectSpeed={onSelectSpeed}
 						selectedZoomId={selectedZoomId}
 						selectedTrimId={selectedTrimId}
 						selectedAnnotationId={selectedAnnotationId}
+						selectedAudioAnnotationId={selectedAudioAnnotationId}
 						selectedBlurId={selectedBlurId}
 						selectedSpeedId={selectedSpeedId}
 						keyframes={keyframes}

@@ -1,5 +1,6 @@
 import { WebDemuxer } from "web-demuxer";
-import type { SpeedRegion, TrimRegion } from "@/components/video-editor/types";
+import type { AudioAnnotationClip, SpeedRegion, TrimRegion } from "@/components/video-editor/types";
+import { mixAudioAnnotationClips } from "./audioAnnotationMixer";
 import type { ExportAudioMuxerCodec, VideoMuxer } from "./muxer";
 
 const AUDIO_BITRATE = 128_000;
@@ -221,6 +222,7 @@ export class AudioProcessor {
 		speedRegions: SpeedRegion[] | undefined,
 		validatedDurationSec: number,
 		exportCodec: ExportAudioCodec,
+		audioAnnotationClips?: AudioAnnotationClip[],
 	): Promise<void> {
 		const sortedTrims = trimRegions ? [...trimRegions].sort((a, b) => a.startMs - b.startMs) : [];
 		const sortedSpeedRegions = speedRegions
@@ -228,6 +230,27 @@ export class AudioProcessor {
 					.filter((region) => region.endMs - region.startMs > MIN_SPEED_REGION_DELTA_MS)
 					.sort((a, b) => a.startMs - b.startMs)
 			: [];
+
+		if (audioAnnotationClips && audioAnnotationClips.length > 0) {
+			const baseBlob = await this.renderPitchPreservedTimelineAudio(
+				videoUrl,
+				sortedTrims,
+				sortedSpeedRegions,
+				validatedDurationSec,
+			);
+			if (this.cancelled) {
+				return;
+			}
+			const mixedBlob = await mixAudioAnnotationClips(
+				baseBlob,
+				audioAnnotationClips,
+				validatedDurationSec,
+			);
+			if (!this.cancelled && mixedBlob.size > 0) {
+				await this.muxRenderedAudioBlob(mixedBlob, muxer, exportCodec);
+			}
+			return;
+		}
 
 		// Speed edits need timeline playback to preserve pitch.
 		if (sortedSpeedRegions.length > 0) {

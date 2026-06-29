@@ -1,6 +1,6 @@
 # 视频指定点批注（Video Position Annotation）
 
-> 状态：图形/文字批注已上线；音频解说与「定帧批注」模式待实现  
+> 状态：图形/文字批注与音频解说 V1 已上线；编辑器内录音、TTS 与「定帧批注」模式待实现  
 > 本文档取代原先以停帧（Hold）为核心的方案叙述，停帧相关内容见 [附录：可选定帧模式](#附录可选定帧模式freeze--hold)
 
 ## 背景与目标
@@ -205,6 +205,25 @@ interface AudioAnnotationClip {
 - _span 计算：`computePositionAnnotationSpan`（`positionAnnotation.ts`）
 - UI 组件：`AddPositionAnnotationMenu.tsx`
 
+## 阶段 2 交互（已实现）
+
+### 用户流程
+
+1. 将播放头定位到目标时刻
+2. 「添加批注」→ **音频解说**，选择 mp3 / wav 文件
+3. 时间轴 **音频批注轨**（紫色条）出现在锚点处，默认时长 = min(源文件时长, 30s)
+4. 选中条目 → 侧栏调节锚点、时长、音量；可替换或删除文件
+5. 预览：进入 `[anchorMs, anchorMs + durationMs)` 时与视频同步播放旁白
+6. 导出 MP4：旁白混入主音轨（与录屏原声叠加）
+
+### 实现要点
+
+- 数据：`AudioAnnotationClip`（`types.ts`），项目版本 v3
+- 导入：`buildAudioAnnotationClip`（`audioAnnotation.ts`）
+- 预览：`VideoPlayback.tsx` 维护 hidden `<audio>` 按播放头同步
+- 导出：`audioAnnotationMixer.ts` → `AudioProcessor.process()` 混音后 mux
+- UI：`AudioAnnotationSettingsPanel.tsx`、时间轴 `row-audio-annotation`
+
 ## 实现路线图
 
 
@@ -212,7 +231,7 @@ interface AudioAnnotationClip {
 | ----- | --------------------------------------------- | ----- |
 | **0** | 图形/文字批注：类型、预览、导出、时间轴轨                         | ✅ 已上线 |
 | **1** | 统一「添加批注」入口：播放头锚点、默认时长、类型选择                    | ✅ 已上线 |
-| **2** | 音频批注 V1：导入 mp3/wav + 预览播放 + 导出混音              | 待做    |
+| **2** | 音频批注 V1：导入 mp3/wav + 预览播放 + 导出混音              | ✅ 已上线 |
 | **3** | 音频批注 V2：编辑器内录音                                | 待做    |
 | **4** | 音频批注 V3：TTS                                   | 待做    |
 | **5** | 定帧批注模式：`freezeDuringAnnotation` + Hold + 时间映射 | 待做    |
@@ -246,6 +265,9 @@ interface AudioAnnotationClip {
 | `src/lib/exporter/frameRenderer.ts`                       | 帧管线调用标注                             |
 | `src/components/video-editor/AddPositionAnnotationMenu.tsx` | 添加批注下拉入口 |
 | `src/components/video-editor/positionAnnotation.ts` | 锚点/时长常量与 span 计算 |
+| `src/lib/audioAnnotation.ts` | 音频批注导入校验与 clip 构建 |
+| `src/lib/exporter/audioAnnotationMixer.ts` | 导出时旁白混音 |
+| `src/components/video-editor/AudioAnnotationSettingsPanel.tsx` | 音频批注侧栏 |
 | `src/lib/arrowAnimation.ts`                               | 箭头入场动画                              |
 | `src/lib/captioning/annotationsFromCaptions.ts`           | 自动字幕 → 批注                           |
 
@@ -303,7 +325,7 @@ interface HoldRegion {
 
 对按 `sourceMs` 升序排列的停帧列表 `H`：
 
-- **源 → 成片**：`outputMs = sourceMs + Σ h`**阶段 1**`oldDuration`（所有 `hold.sourceMs < sourceMs`）
+- **源 → 成片**：`outputMs = sourceMs + Σ holdDurationMs`（所有 `hold.sourceMs < sourceMs`）
 - **成片 → 源**：若落在某停帧的成片区间 `[holdOutStart, holdOutEnd)`，则 `sourceMs = hold.sourceMs`；否则减去已累计停帧时长
 
 实现：`src/lib/timelineMapping.ts`（待建）

@@ -83,6 +83,11 @@
 		"typeText": "文字解说",
 		"typeArrow": "箭头标注",
 		"typeImage": "图片",
-		"typeBlur": "模糊"
+		"typeBlur": "模糊",
+		"typeAudio": "音频解说"
+	},
+	"audioAnnotation": {
+		"invalidFileType": "请上传 MP3 或 WAV 文件。",
+		"failedToLoad": "无法加载音频文件"
 	}
 }
