@@ -152,6 +152,8 @@
 		"arrowHeadWidth": "箭頭寬度：{{value}}",
 		"arrowHeadLength": "箭頭高度：{{value}}",
 		"arrowColor": "箭頭顏色",
+		"arrowAnimation": "箭頭動畫",
+		"selectArrowAnimation": "選擇動畫",
 		"restoreDefaults": "恢復預設",
 		"blurShape": "模糊形狀",
 		"blurIntensity": "模糊強度",
@@ -174,6 +176,11 @@
 		"blurTypeBlur": "模糊",
 		"blurTypeMosaic": "馬賽克模糊",
 		"mosaicBlockSize": "馬賽克區塊大小"
+	},
+	"arrowAnimation": {
+		"none": "無",
+		"nudge": "方向指示",
+		"pulse": "強調脈衝"
 	},
 	"fontStyles": {
 		"classic": "經典",

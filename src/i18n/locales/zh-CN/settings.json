@@ -151,6 +151,8 @@
 		"arrowHeadWidth": "箭头宽度：{{value}}",
 		"arrowHeadLength": "箭头高度：{{value}}",
 		"arrowColor": "箭头颜色",
+		"arrowAnimation": "箭头动画",
+		"selectArrowAnimation": "选择动画",
 		"restoreDefaults": "恢复默认",
 		"blurShape": "模糊形状",
 		"blurIntensity": "模糊强度",
@@ -183,6 +185,11 @@
 		"simple": "简约",
 		"modern": "现代",
 		"clean": "简洁"
+	},
+	"arrowAnimation": {
+		"none": "无",
+		"nudge": "方向指示",
+		"pulse": "强调脉冲"
 	},
 	"customFont": {
 		"dialogTitle": "添加 Google 字体",

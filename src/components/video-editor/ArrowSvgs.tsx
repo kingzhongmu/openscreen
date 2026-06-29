@@ -1,4 +1,5 @@
 import { useId } from "react";
+import type { ArrowAnimationTransform } from "./arrowGeometry";
 import {
 	ARROW_ROTATIONS,
 	ARROW_VIEWBOX_SIZE,
@@ -11,6 +12,7 @@ import type { ArrowDirection, FigureData } from "./types";
 export interface ParametricArrowProps {
 	direction: ArrowDirection;
 	figureData: Partial<FigureData> & Pick<FigureData, "color">;
+	animationState?: ArrowAnimationTransform;
 	className?: string;
 	showShadow?: boolean;
 }
@@ -18,6 +20,7 @@ export interface ParametricArrowProps {
 export function ParametricArrow({
 	direction,
 	figureData,
+	animationState,
 	className,
 	showShadow = true,
 }: ParametricArrowProps) {
@@ -26,6 +29,7 @@ export function ParametricArrow({
 	const geometry = computeArrowGeometry(normalized);
 	const rotation = ARROW_ROTATIONS[direction];
 	const headPointsAttr = geometry.headPoints.map((point) => `${point.x},${point.y}`).join(" ");
+	const animation = animationState ?? { translateLocalX: 0, scale: 1, opacity: 1 };
 
 	return (
 		<svg
@@ -41,7 +45,8 @@ export function ParametricArrow({
 				</defs>
 			) : null}
 			<g
-				transform={getArrowTransform(geometry, rotation)}
+				transform={getArrowTransform(geometry, rotation, animation)}
+				opacity={animation.opacity}
 				fill={normalized.color}
 				filter={showShadow ? `url(#${filterId})` : undefined}
 			>

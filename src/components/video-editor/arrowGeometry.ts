@@ -1,3 +1,4 @@
+import { normalizeArrowAnimation } from "@/lib/arrowAnimation";
 import type { ArrowDirection, FigureData } from "./types";
 
 export const ARROW_VIEWBOX_SIZE = 200;
@@ -105,15 +106,24 @@ export function computeArrowFitScale(
 	return Math.min(available / rotatedBounds.width, available / rotatedBounds.height);
 }
 
+export interface ArrowAnimationTransform {
+	translateLocalX: number;
+	scale: number;
+	opacity: number;
+}
+
 export function getArrowTransform(
 	geometry: ArrowGeometry,
 	rotationDeg: number,
+	animation?: Pick<ArrowAnimationTransform, "translateLocalX" | "scale">,
 	viewBoxSize = ARROW_VIEWBOX_SIZE,
 	padding = ARROW_VIEWBOX_PADDING,
 ): string {
 	const fitScale = computeArrowFitScale(geometry, rotationDeg, viewBoxSize, padding);
 	const viewCenter = viewBoxSize / 2;
-	return `translate(${viewCenter} ${viewCenter}) rotate(${rotationDeg}) scale(${fitScale}) translate(${-geometry.centerX} ${-geometry.centerY})`;
+	const animScale = animation?.scale ?? 1;
+	const nudgeX = animation?.translateLocalX ?? 0;
+	return `translate(${viewCenter} ${viewCenter}) rotate(${rotationDeg}) scale(${fitScale * animScale}) translate(${nudgeX} 0) translate(${-geometry.centerX} ${-geometry.centerY})`;
 }
 
 type LegacyFigureData = FigureData & { strokeWidth?: number };
@@ -156,6 +166,7 @@ export function normalizeFigureData(input: Partial<LegacyFigureData> | undefined
 			ARROW_HEAD_LENGTH.min,
 			ARROW_HEAD_LENGTH.max,
 		),
+		arrowAnimation: normalizeArrowAnimation(input?.arrowAnimation),
 	};
 }
 

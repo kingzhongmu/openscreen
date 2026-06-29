@@ -226,6 +226,8 @@ export type ArrowDirection =
 	| "down-right"
 	| "down-left";
 
+export type ArrowAnimation = "none" | "nudge" | "pulse";
+
 export interface FigureData {
 	arrowDirection: ArrowDirection;
 	color: string;
@@ -233,6 +235,7 @@ export interface FigureData {
 	shaftLength: number;
 	headWidth: number;
 	headLength: number;
+	arrowAnimation: ArrowAnimation;
 }
 
 export type BlurShape = "rectangle" | "oval" | "freehand";
@@ -336,6 +339,7 @@ export const DEFAULT_FIGURE_DATA: FigureData = {
 	shaftLength: 80,
 	headWidth: 40,
 	headLength: 30,
+	arrowAnimation: "none",
 };
 
 export const DEFAULT_BLUR_FREEHAND_POINTS: Array<{ x: number; y: number }> = [

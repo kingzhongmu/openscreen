@@ -7,6 +7,7 @@ import {
 } from "@/components/video-editor/arrowGeometry";
 import { type AnnotationRegion, type FigureData } from "@/components/video-editor/types";
 import { getTextAnimationState } from "@/lib/annotationTextAnimation";
+import { getArrowAnimationState } from "@/lib/arrowAnimation";
 import {
 	applyMosaicToImageData,
 	getBlurOverlayColor,
@@ -71,6 +72,8 @@ function tokenizeForWrap(line: string): string[] {
 function renderArrow(
 	ctx: CanvasRenderingContext2D,
 	figureData: FigureData,
+	startMs: number,
+	currentTimeMs: number,
 	x: number,
 	y: number,
 	width: number,
@@ -80,6 +83,7 @@ function renderArrow(
 	const normalized = normalizeFigureData(figureData);
 	const geometry = computeArrowGeometry(normalized);
 	const rotation = ARROW_ROTATIONS[normalized.arrowDirection];
+	const animationState = getArrowAnimationState(normalized, startMs, currentTimeMs, geometry);
 	const fitScale = computeArrowFitScale(geometry, rotation);
 	const viewCenter = ARROW_VIEWBOX_SIZE / 2;
 
@@ -97,8 +101,13 @@ function renderArrow(
 
 	ctx.translate(offsetX + viewCenter * containerScale, offsetY + viewCenter * containerScale);
 	ctx.rotate((rotation * Math.PI) / 180);
-	ctx.scale(containerScale * fitScale, containerScale * fitScale);
+	ctx.scale(
+		containerScale * fitScale * animationState.scale,
+		containerScale * fitScale * animationState.scale,
+	);
+	ctx.translate(animationState.translateLocalX, 0);
 	ctx.translate(-geometry.centerX, -geometry.centerY);
+	ctx.globalAlpha *= animationState.opacity;
 
 	ctx.shadowColor = "rgba(0, 0, 0, 0.3)";
 	ctx.shadowBlur = 8;
@@ -451,7 +460,17 @@ export async function renderAnnotations(
 
 			case "figure":
 				if (annotation.figureData) {
-					renderArrow(ctx, annotation.figureData, x, y, width, height, scaleFactor);
+					renderArrow(
+						ctx,
+						annotation.figureData,
+						annotation.startMs,
+						currentTimeMs,
+						x,
+						y,
+						width,
+						height,
+						scaleFactor,
+					);
 				}
 				break;
 

@@ -33,6 +33,7 @@ import {
 	restoreAnnotationTextStyleDefaults,
 } from "@/lib/annotationPreferences";
 import { normalizeTextAnimation, TEXT_ANIMATION_OPTIONS } from "@/lib/annotationTextAnimation";
+import { ARROW_ANIMATION_OPTIONS, normalizeArrowAnimation } from "@/lib/arrowAnimation";
 import { type CustomFont, getCustomFonts } from "@/lib/customFonts";
 import { cn } from "@/lib/utils";
 import ColorPicker from "../ui/color-picker";
@@ -605,6 +606,31 @@ export function AnnotationSettingsPanel({
 												</button>
 											))}
 										</div>
+									</div>
+
+									<div>
+										<label className="mb-2 block text-xs font-medium text-slate-200">
+											{t("annotation.arrowAnimation")}
+										</label>
+										<Select
+											value={normalizeArrowAnimation(figureData.arrowAnimation)}
+											onValueChange={(value) =>
+												updateFigureData({
+													arrowAnimation: normalizeArrowAnimation(value),
+												})
+											}
+										>
+											<SelectTrigger className="h-9 w-full border-white/10 bg-white/5 text-xs text-slate-200">
+												<SelectValue placeholder={t("annotation.selectArrowAnimation")} />
+											</SelectTrigger>
+											<SelectContent className="max-h-[240px] border-white/10 bg-[#1a1a1c] text-slate-200">
+												{ARROW_ANIMATION_OPTIONS.map((option) => (
+													<SelectItem key={option.value} value={option.value}>
+														{t(option.translationKey)}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
 									</div>
 
 									<div>

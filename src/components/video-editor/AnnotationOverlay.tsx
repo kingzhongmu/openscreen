@@ -1,6 +1,7 @@
 import { type CSSProperties, type PointerEvent, useEffect, useRef, useState } from "react";
 import { Rnd } from "react-rnd";
 import { getTextAnimationState } from "@/lib/annotationTextAnimation";
+import { getArrowAnimationState } from "@/lib/arrowAnimation";
 import {
 	getBlurOverlayColor,
 	getMosaicGridOverlayColor,
@@ -8,7 +9,7 @@ import {
 } from "@/lib/blurEffects";
 import { cn } from "@/lib/utils";
 import { ParametricArrow } from "./ArrowSvgs";
-import { normalizeFigureData } from "./arrowGeometry";
+import { computeArrowGeometry, normalizeFigureData } from "./arrowGeometry";
 import {
 	type AnnotationRegion,
 	type BlurData,
@@ -202,7 +203,20 @@ export function AnnotationOverlay({
 
 	const renderArrow = () => {
 		const figureData = normalizeFigureData(annotation.figureData ?? DEFAULT_FIGURE_DATA);
-		return <ParametricArrow direction={figureData.arrowDirection} figureData={figureData} />;
+		const geometry = computeArrowGeometry(figureData);
+		const animationState = getArrowAnimationState(
+			figureData,
+			annotation.startMs,
+			currentTimeMs,
+			geometry,
+		);
+		return (
+			<ParametricArrow
+				direction={figureData.arrowDirection}
+				figureData={figureData}
+				animationState={animationState}
+			/>
+		);
 	};
 
 	const normalizePoint = (event: PointerEvent<HTMLDivElement>) => {

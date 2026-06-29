@@ -150,6 +150,8 @@
 		"arrowHeadWidth": "Head Width: {{value}}",
 		"arrowHeadLength": "Head Length: {{value}}",
 		"arrowColor": "Arrow Color",
+		"arrowAnimation": "Arrow Animation",
+		"selectArrowAnimation": "Select animation",
 		"restoreDefaults": "Restore Defaults",
 		"blurType": "Blur Type",
 		"blurTypeBlur": "Blur",
@@ -193,6 +195,11 @@
 		"slideLeft": "Slide Left",
 		"typewriter": "Typewriter",
 		"pulse": "Pulse"
+	},
+	"arrowAnimation": {
+		"none": "None",
+		"nudge": "Direction Nudge",
+		"pulse": "Emphasis Pulse"
 	},
 	"customFont": {
 		"dialogTitle": "Add Google Font",
