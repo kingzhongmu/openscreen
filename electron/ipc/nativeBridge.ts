@@ -161,6 +161,7 @@ export function registerNativeBridgeHandlers(context: NativeBridgeContext) {
 									request.payload.projectData,
 									request.payload.suggestedName,
 									request.payload.existingProjectPath,
+									request.payload.audioAssets,
 								),
 							);
 						case "loadProjectFile":

@@ -222,12 +222,19 @@ interface Window {
 			projectData: unknown,
 			suggestedName?: string,
 			existingProjectPath?: string,
+			audioAssets?: Array<{
+				clipId: string;
+				fileName: string;
+				data?: ArrayBuffer;
+				sourcePath?: string;
+			}>,
 		) => Promise<{
 			success: boolean;
 			path?: string;
 			message?: string;
 			canceled?: boolean;
 			error?: string;
+			audioClipPaths?: Record<string, string>;
 		}>;
 		loadProjectFile: (projectFolder?: string) => Promise<{
 			success: boolean;

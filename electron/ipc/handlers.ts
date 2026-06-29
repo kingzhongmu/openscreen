@@ -2575,15 +2575,147 @@ export function registerIpcHandlers(
 
 	ipcMain.handle(
 		"save-project-file",
-		async (_, projectData: unknown, suggestedName?: string, existingProjectPath?: string) => {
-			return saveProjectFile(projectData, suggestedName, existingProjectPath);
+		async (
+			_,
+			projectData: unknown,
+			suggestedName?: string,
+			existingProjectPath?: string,
+			audioAssets?: Array<{
+				clipId: string;
+				fileName: string;
+				data?: ArrayBuffer;
+				sourcePath?: string;
+			}>,
+		) => {
+			return saveProjectFile(projectData, suggestedName, existingProjectPath, audioAssets);
 		},
 	);
+
+	const AUDIO_ANNOTATION_ASSETS_DIR = "audio-assets";
+
+	function normalizeAudioAssetExtension(fileName: string): string {
+		const lower = fileName.toLowerCase();
+		if (lower.endsWith(".wav")) {
+			return ".wav";
+		}
+		if (lower.endsWith(".mp3")) {
+			return ".mp3";
+		}
+		return ".mp3";
+	}
+
+	async function persistProjectAudioAssets(
+		projectFilePath: string,
+		assets: Array<{
+			clipId: string;
+			fileName: string;
+			data?: ArrayBuffer;
+			sourcePath?: string;
+		}>,
+	): Promise<Record<string, string>> {
+		const projectDir = path.dirname(projectFilePath);
+		const assetsDir = path.join(projectDir, AUDIO_ANNOTATION_ASSETS_DIR);
+		await fs.mkdir(assetsDir, { recursive: true });
+		const mapping: Record<string, string> = {};
+
+		for (const asset of assets) {
+			const ext = normalizeAudioAssetExtension(asset.fileName);
+			const relativePath = `${AUDIO_ANNOTATION_ASSETS_DIR}/${asset.clipId}${ext}`;
+			const absolutePath = path.join(projectDir, relativePath);
+
+			if (asset.sourcePath) {
+				await fs.copyFile(asset.sourcePath, absolutePath);
+			} else if (asset.data) {
+				await fs.writeFile(absolutePath, Buffer.from(asset.data));
+			} else {
+				continue;
+			}
+
+			mapping[asset.clipId] = relativePath;
+		}
+
+		return mapping;
+	}
+
+	function applyAudioClipPathsToProjectData(
+		projectData: unknown,
+		audioClipPaths: Record<string, string>,
+	): void {
+		if (!projectData || typeof projectData !== "object") {
+			return;
+		}
+
+		const editor = (projectData as { editor?: unknown }).editor;
+		if (!editor || typeof editor !== "object") {
+			return;
+		}
+
+		const clips = (editor as { audioAnnotationClips?: unknown }).audioAnnotationClips;
+		if (!Array.isArray(clips)) {
+			return;
+		}
+
+		for (const clip of clips) {
+			if (!clip || typeof clip !== "object") {
+				continue;
+			}
+
+			const clipRecord = clip as {
+				id?: string;
+				audioUrl?: string;
+				sourceFilePath?: string;
+			};
+			const relativePath = clipRecord.id ? audioClipPaths[clipRecord.id] : undefined;
+			if (relativePath) {
+				clipRecord.audioUrl = relativePath;
+			}
+
+			delete clipRecord.sourceFilePath;
+		}
+	}
+
+	async function writeProjectFileToPath(
+		filePath: string,
+		projectData: unknown,
+		audioAssets?: Array<{
+			clipId: string;
+			fileName: string;
+			data?: ArrayBuffer;
+			sourcePath?: string;
+		}>,
+	): Promise<{
+		success: true;
+		path: string;
+		message: string;
+		audioClipPaths?: Record<string, string>;
+	}> {
+		let audioClipPaths: Record<string, string> | undefined;
+		if (audioAssets && audioAssets.length > 0) {
+			audioClipPaths = await persistProjectAudioAssets(filePath, audioAssets);
+			applyAudioClipPathsToProjectData(projectData, audioClipPaths);
+		}
+
+		await fs.writeFile(filePath, JSON.stringify(projectData, null, 2), "utf-8");
+		currentProjectPath = filePath;
+
+		return {
+			success: true,
+			path: filePath,
+			message: "Project saved successfully",
+			...(audioClipPaths && Object.keys(audioClipPaths).length > 0 ? { audioClipPaths } : {}),
+		};
+	}
 
 	async function saveProjectFile(
 		projectData: unknown,
 		suggestedName?: string,
 		existingProjectPath?: string,
+		audioAssets?: Array<{
+			clipId: string;
+			fileName: string;
+			data?: ArrayBuffer;
+			sourcePath?: string;
+		}>,
 	): Promise<ProjectFileResult> {
 		try {
 			const trustedExistingProjectPath = isTrustedProjectPath(existingProjectPath)
@@ -2591,17 +2723,7 @@ export function registerIpcHandlers(
 				: null;
 
 			if (trustedExistingProjectPath) {
-				await fs.writeFile(
-					trustedExistingProjectPath,
-					JSON.stringify(projectData, null, 2),
-					"utf-8",
-				);
-				currentProjectPath = trustedExistingProjectPath;
-				return {
-					success: true,
-					path: trustedExistingProjectPath,
-					message: "Project saved successfully",
-				};
+				return await writeProjectFileToPath(trustedExistingProjectPath, projectData, audioAssets);
 			}
 
 			const safeName = (suggestedName || `project-${Date.now()}`).replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -2634,14 +2756,7 @@ export function registerIpcHandlers(
 				};
 			}
 
-			await fs.writeFile(result.filePath, JSON.stringify(projectData, null, 2), "utf-8");
-			currentProjectPath = result.filePath;
-
-			return {
-				success: true,
-				path: result.filePath,
-				message: "Project saved successfully",
-			};
+			return await writeProjectFileToPath(result.filePath, projectData, audioAssets);
 		} catch (error) {
 			console.error("Failed to save project file:", error);
 			return {

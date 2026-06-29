@@ -88,6 +88,7 @@ export interface ProjectFileResult {
 	message?: string;
 	canceled?: boolean;
 	error?: string;
+	audioClipPaths?: Record<string, string>;
 }
 
 export type NativeBridgeErrorCode =
@@ -159,6 +160,12 @@ export type NativeBridgeRequest =
 				projectData: unknown;
 				suggestedName?: string;
 				existingProjectPath?: string;
+				audioAssets?: Array<{
+					clipId: string;
+					fileName: string;
+					data?: ArrayBuffer;
+					sourcePath?: string;
+				}>;
 			};
 			requestId?: string;
 	  }

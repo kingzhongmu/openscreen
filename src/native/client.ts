@@ -74,7 +74,17 @@ export const nativeBridgeClient = {
 				domain: "project",
 				action: "getCurrentContext",
 			}),
-		saveProjectFile: (projectData: unknown, suggestedName?: string, existingProjectPath?: string) =>
+		saveProjectFile: (
+			projectData: unknown,
+			suggestedName?: string,
+			existingProjectPath?: string,
+			audioAssets?: Array<{
+				clipId: string;
+				fileName: string;
+				data?: ArrayBuffer;
+				sourcePath?: string;
+			}>,
+		) =>
 			requireNativeBridgeData<ProjectFileResult>({
 				domain: "project",
 				action: "saveProjectFile",
@@ -82,6 +92,7 @@ export const nativeBridgeClient = {
 					projectData,
 					suggestedName,
 					existingProjectPath,
+					audioAssets,
 				},
 			}),
 		loadProjectFile: (projectFolder?: string) =>

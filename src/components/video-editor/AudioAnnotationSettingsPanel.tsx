@@ -9,6 +9,7 @@ import {
 	getAudioFileDurationMs,
 	isAcceptedAudioAnnotationFile,
 } from "@/lib/audioAnnotation";
+import { resolveImportedAudioReference } from "@/lib/audioAnnotationPersistence";
 import {
 	formatAnnotationClockMs,
 	MAX_POSITION_ANNOTATION_DURATION_MS,
@@ -21,7 +22,12 @@ interface AudioAnnotationSettingsPanelProps {
 	videoDurationMs?: number;
 	onVolumeChange: (volume: number) => void;
 	onDurationChange?: (durationMs: number) => void;
-	onReplaceAudio?: (audioUrl: string, fileName: string, sourceDurationMs: number) => void;
+	onReplaceAudio?: (
+		audioUrl: string,
+		fileName: string,
+		sourceDurationMs: number,
+		sourceFilePath?: string,
+	) => void;
 	onDelete: () => void;
 }
 
@@ -52,9 +58,9 @@ export function AudioAnnotationSettingsPanel({
 		}
 
 		try {
-			const audioUrl = URL.createObjectURL(file);
+			const { audioUrl, sourceFilePath } = resolveImportedAudioReference(file);
 			const sourceDurationMs = await getAudioFileDurationMs(audioUrl);
-			onReplaceAudio(audioUrl, file.name, sourceDurationMs);
+			onReplaceAudio(audioUrl, file.name, sourceDurationMs, sourceFilePath);
 		} catch {
 			toast.error(t("audioAnnotation.failedToLoad"));
 		}

@@ -208,8 +208,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	clearCurrentVideoPath: () => {
 		return ipcRenderer.invoke("clear-current-video-path");
 	},
-	saveProjectFile: (projectData: unknown, suggestedName?: string, existingProjectPath?: string) => {
-		return ipcRenderer.invoke("save-project-file", projectData, suggestedName, existingProjectPath);
+	saveProjectFile: (
+		projectData: unknown,
+		suggestedName?: string,
+		existingProjectPath?: string,
+		audioAssets?: Array<{
+			clipId: string;
+			fileName: string;
+			data?: ArrayBuffer;
+			sourcePath?: string;
+		}>,
+	) => {
+		return ipcRenderer.invoke(
+			"save-project-file",
+			projectData,
+			suggestedName,
+			existingProjectPath,
+			audioAssets,
+		);
 	},
 	loadProjectFile: (projectFolder?: string) => {
 		return ipcRenderer.invoke("load-project-file", projectFolder);

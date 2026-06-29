@@ -645,9 +645,17 @@ function Timeline({
 		onSelectZoom?.(null);
 		onSelectTrim?.(null);
 		onSelectAnnotation?.(null);
+		onSelectAudioAnnotation?.(null);
 		onSelectBlur?.(null);
 		onSelectSpeed?.(null);
-	}, [onSelectZoom, onSelectTrim, onSelectAnnotation, onSelectBlur, onSelectSpeed]);
+	}, [
+		onSelectZoom,
+		onSelectTrim,
+		onSelectAnnotation,
+		onSelectAudioAnnotation,
+		onSelectBlur,
+		onSelectSpeed,
+	]);
 
 	const handleTimelineClick = useCallback(
 		(e: React.MouseEvent<HTMLDivElement>) => {

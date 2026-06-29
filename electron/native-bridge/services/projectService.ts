@@ -13,6 +13,12 @@ interface ProjectServiceOptions {
 		projectData: unknown,
 		suggestedName?: string,
 		existingProjectPath?: string,
+		audioAssets?: Array<{
+			clipId: string;
+			fileName: string;
+			data?: ArrayBuffer;
+			sourcePath?: string;
+		}>,
 	) => Promise<ProjectFileResult>;
 	loadProjectFile: (projectFolder?: string) => Promise<ProjectFileResult>;
 	loadCurrentProjectFile: () => Promise<ProjectFileResult>;
@@ -39,11 +45,18 @@ export class ProjectService {
 		projectData: unknown,
 		suggestedName?: string,
 		existingProjectPath?: string,
+		audioAssets?: Array<{
+			clipId: string;
+			fileName: string;
+			data?: ArrayBuffer;
+			sourcePath?: string;
+		}>,
 	) {
 		const result = await this.options.saveProjectFile(
 			projectData,
 			suggestedName,
 			existingProjectPath,
+			audioAssets,
 		);
 		this.getCurrentContext();
 		return result;

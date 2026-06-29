@@ -222,6 +222,7 @@ interface AudioAnnotationClip {
 - 导入：`buildAudioAnnotationClip`（`audioAnnotation.ts`）
 - 预览：`VideoPlayback.tsx` 维护 hidden `<audio>` 按播放头同步
 - 导出：`audioAnnotationMixer.ts` → `AudioProcessor.process()` 混音后 mux
+- **持久化**：保存项目时将音频复制到项目文件旁的 `audio-assets/` 目录（不在 `recordings/`）；加载时解析为 `file://` 路径
 - UI：`AudioAnnotationSettingsPanel.tsx`、时间轴 `row-audio-annotation`
 
 ## 实现路线图

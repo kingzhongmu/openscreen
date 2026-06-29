@@ -323,6 +323,7 @@ interface SettingsPanelProps {
 		audioUrl: string,
 		fileName: string,
 		sourceDurationMs: number,
+		sourceFilePath?: string,
 	) => void;
 	onAudioAnnotationDelete?: (id: string) => void;
 	selectedBlurId?: string | null;
@@ -822,12 +823,13 @@ export function SettingsPanel({
 						}
 						onReplaceAudio={
 							onAudioAnnotationReplace
-								? (audioUrl, fileName, sourceDurationMs) =>
+								? (audioUrl, fileName, sourceDurationMs, sourceFilePath) =>
 										onAudioAnnotationReplace(
 											selectedAudioAnnotation.id,
 											audioUrl,
 											fileName,
 											sourceDurationMs,
+											sourceFilePath,
 										)
 								: undefined
 						}

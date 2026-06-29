@@ -63,6 +63,7 @@ export function buildAudioAnnotationClip(
 	sourceDurationMs: number,
 	fileName: string,
 	totalMs: number,
+	sourceFilePath?: string,
 ): AudioAnnotationClip | null {
 	if (totalMs <= 0) {
 		return null;
@@ -88,6 +89,7 @@ export function buildAudioAnnotationClip(
 		fileName,
 		sourceDurationMs,
 		volume: DEFAULT_AUDIO_ANNOTATION_VOLUME,
+		...(sourceFilePath ? { sourceFilePath } : {}),
 	};
 }
 

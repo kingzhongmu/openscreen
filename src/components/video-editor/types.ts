@@ -224,6 +224,8 @@ export interface AudioAnnotationClip {
 	durationMs: number;
 	source: AudioAnnotationSource;
 	audioUrl: string;
+	/** Absolute path on disk when imported in Electron; used when saving the project. */
+	sourceFilePath?: string;
 	fileName?: string;
 	sourceDurationMs?: number;
 	volume?: number;

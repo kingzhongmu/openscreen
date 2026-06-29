@@ -36,6 +36,12 @@ import {
 	isAcceptedAudioAnnotationFile,
 } from "@/lib/audioAnnotation";
 import {
+	applyPersistedAudioClipPaths,
+	collectAudioAssetsForProjectSave,
+	resolveAudioClipsForProjectLoad,
+	resolveImportedAudioReference,
+} from "@/lib/audioAnnotationPersistence";
+import {
 	captionSegmentsToAnnotationRegions,
 	extractMono16kFromVideoUrl,
 	MAX_CAPTION_AUDIO_SEC,
@@ -430,7 +436,10 @@ export default function VideoEditor() {
 				trimRegions: normalizedEditor.trimRegions,
 				speedRegions: normalizedEditor.speedRegions,
 				annotationRegions: normalizedEditor.annotationRegions,
-				audioAnnotationClips: normalizedEditor.audioAnnotationClips,
+				audioAnnotationClips: resolveAudioClipsForProjectLoad(
+					normalizedEditor.audioAnnotationClips,
+					path,
+				),
 				aspectRatio: normalizedEditor.aspectRatio,
 				webcamLayoutPreset: normalizedEditor.webcamLayoutPreset,
 				webcamMaskShape: normalizedEditor.webcamMaskShape,
@@ -659,6 +668,17 @@ export default function VideoEditor() {
 				return false;
 			}
 
+			let audioAssets: Awaited<ReturnType<typeof collectAudioAssetsForProjectSave>> = [];
+			try {
+				audioAssets = await collectAudioAssetsForProjectSave(
+					audioAnnotationClips,
+					currentProjectPath,
+				);
+			} catch {
+				toast.error(t("audioAnnotation.failedToLoad"));
+				return false;
+			}
+
 			const editorState = {
 				wallpaper,
 				shadowIntensity,
@@ -703,6 +723,7 @@ export default function VideoEditor() {
 				projectData,
 				fileNameBase,
 				forceSaveAs ? undefined : (currentProjectPath ?? undefined),
+				audioAssets,
 			);
 
 			if (result.canceled) {
@@ -718,6 +739,17 @@ export default function VideoEditor() {
 			if (result.path) {
 				setCurrentProjectPath(result.path);
 			}
+
+			if (result.path && result.audioClipPaths) {
+				updateState((prev) => ({
+					audioAnnotationClips: applyPersistedAudioClipPaths(
+						prev.audioAnnotationClips,
+						result.path as string,
+						result.audioClipPaths as Record<string, string>,
+					),
+				}));
+			}
+
 			setLastSavedSnapshot(projectSnapshot);
 
 			toast.success(t("project.savedTo", { path: result.path ?? "" }));
@@ -756,6 +788,7 @@ export default function VideoEditor() {
 			cursorTheme,
 			videoPath,
 			t,
+			updateState,
 		],
 	);
 
@@ -878,7 +911,6 @@ export default function VideoEditor() {
 		setSelectedAnnotationId(null);
 		setSelectedAudioAnnotationId(null);
 		setSelectedBlurId(null);
-		setSelectedAudioAnnotationId(null);
 		// Reset playback.
 		setCurrentTime(0);
 		setIsPlaying(false);
@@ -1000,46 +1032,69 @@ export default function VideoEditor() {
 		video.currentTime = time;
 	}
 
-	const handleSelectZoom = useCallback((id: string | null) => {
-		setSelectedZoomId(id);
-		if (id) {
-			setSelectedTrimId(null);
-			setSelectedSpeedId(null);
-			setSelectedAnnotationId(null);
-			setSelectedBlurId(null);
-		}
-	}, []);
+	const selectTimelineItem = useCallback(
+		(
+			item:
+				| { kind: "zoom"; id: string }
+				| { kind: "trim"; id: string }
+				| { kind: "speed"; id: string }
+				| { kind: "annotation"; id: string }
+				| { kind: "blur"; id: string }
+				| { kind: "audio"; id: string },
+		) => {
+			setSelectedZoomId(item.kind === "zoom" ? item.id : null);
+			setSelectedTrimId(item.kind === "trim" ? item.id : null);
+			setSelectedSpeedId(item.kind === "speed" ? item.id : null);
+			setSelectedAnnotationId(item.kind === "annotation" ? item.id : null);
+			setSelectedBlurId(item.kind === "blur" ? item.id : null);
+			setSelectedAudioAnnotationId(item.kind === "audio" ? item.id : null);
+		},
+		[],
+	);
 
-	const handleSelectTrim = useCallback((id: string | null) => {
-		setSelectedTrimId(id);
-		if (id) {
-			setSelectedZoomId(null);
-			setSelectedSpeedId(null);
-			setSelectedAnnotationId(null);
-			setSelectedBlurId(null);
-		}
-	}, []);
+	const handleSelectZoom = useCallback(
+		(id: string | null) => {
+			if (id) {
+				selectTimelineItem({ kind: "zoom", id });
+			} else {
+				setSelectedZoomId(null);
+			}
+		},
+		[selectTimelineItem],
+	);
 
-	const handleSelectAnnotation = useCallback((id: string | null) => {
-		setSelectedAnnotationId(id);
-		if (id) {
-			setSelectedZoomId(null);
-			setSelectedTrimId(null);
-			setSelectedSpeedId(null);
-			setSelectedBlurId(null);
-			setSelectedAudioAnnotationId(null);
-		}
-	}, []);
+	const handleSelectTrim = useCallback(
+		(id: string | null) => {
+			if (id) {
+				selectTimelineItem({ kind: "trim", id });
+			} else {
+				setSelectedTrimId(null);
+			}
+		},
+		[selectTimelineItem],
+	);
 
-	const handleSelectBlur = useCallback((id: string | null) => {
-		setSelectedBlurId(id);
-		if (id) {
-			setSelectedZoomId(null);
-			setSelectedTrimId(null);
-			setSelectedAnnotationId(null);
-			setSelectedSpeedId(null);
-		}
-	}, []);
+	const handleSelectAnnotation = useCallback(
+		(id: string | null) => {
+			if (id) {
+				selectTimelineItem({ kind: "annotation", id });
+			} else {
+				setSelectedAnnotationId(null);
+			}
+		},
+		[selectTimelineItem],
+	);
+
+	const handleSelectBlur = useCallback(
+		(id: string | null) => {
+			if (id) {
+				selectTimelineItem({ kind: "blur", id });
+			} else {
+				setSelectedBlurId(null);
+			}
+		},
+		[selectTimelineItem],
+	);
 
 	const handleZoomAdded = useCallback(
 		(span: Span) => {
@@ -1056,13 +1111,9 @@ export default function VideoEditor() {
 				source: "manual",
 			};
 			pushState((prev) => ({ zoomRegions: [...prev.zoomRegions, newRegion] }));
-			setSelectedZoomId(id);
-			setSelectedTrimId(null);
-			setSelectedSpeedId(null);
-			setSelectedAnnotationId(null);
-			setSelectedBlurId(null);
+			selectTimelineItem({ kind: "zoom", id });
 		},
-		[pushState, autoFocusAll],
+		[pushState, autoFocusAll, selectTimelineItem],
 	);
 
 	// Builds fresh "auto" zoom regions from cursor telemetry without overlapping
@@ -1160,13 +1211,9 @@ export default function VideoEditor() {
 				endMs: Math.round(span.end),
 			};
 			pushState((prev) => ({ trimRegions: [...prev.trimRegions, newRegion] }));
-			setSelectedTrimId(id);
-			setSelectedZoomId(null);
-			setSelectedSpeedId(null);
-			setSelectedAnnotationId(null);
-			setSelectedBlurId(null);
+			selectTimelineItem({ kind: "trim", id });
 		},
-		[pushState],
+		[pushState, selectTimelineItem],
 	);
 
 	const handleZoomSpanChange = useCallback(
@@ -1311,15 +1358,16 @@ export default function VideoEditor() {
 		[selectedTrimId, pushState],
 	);
 
-	const handleSelectSpeed = useCallback((id: string | null) => {
-		setSelectedSpeedId(id);
-		if (id) {
-			setSelectedZoomId(null);
-			setSelectedTrimId(null);
-			setSelectedAnnotationId(null);
-			setSelectedBlurId(null);
-		}
-	}, []);
+	const handleSelectSpeed = useCallback(
+		(id: string | null) => {
+			if (id) {
+				selectTimelineItem({ kind: "speed", id });
+			} else {
+				setSelectedSpeedId(null);
+			}
+		},
+		[selectTimelineItem],
+	);
 
 	const handleSpeedAdded = useCallback(
 		(span: Span) => {
@@ -1333,13 +1381,9 @@ export default function VideoEditor() {
 			pushState((prev) => ({
 				speedRegions: [...prev.speedRegions, newRegion],
 			}));
-			setSelectedSpeedId(id);
-			setSelectedZoomId(null);
-			setSelectedTrimId(null);
-			setSelectedAnnotationId(null);
-			setSelectedBlurId(null);
+			selectTimelineItem({ kind: "speed", id });
 		},
-		[pushState],
+		[pushState, selectTimelineItem],
 	);
 
 	const handleSpeedSpanChange = useCallback(
@@ -1412,22 +1456,16 @@ export default function VideoEditor() {
 			}));
 
 			if (type === "blur") {
-				setSelectedBlurId(id);
-				setSelectedAnnotationId(null);
+				selectTimelineItem({ kind: "blur", id });
 			} else {
-				setSelectedAnnotationId(id);
-				setSelectedBlurId(null);
+				selectTimelineItem({ kind: "annotation", id });
 			}
-			setSelectedZoomId(null);
-			setSelectedTrimId(null);
-			setSelectedSpeedId(null);
-			setSelectedAudioAnnotationId(null);
 
 			if (options?.pausePlayback !== false) {
 				setIsPlaying(false);
 			}
 		},
-		[currentTime, pushState],
+		[currentTime, pushState, selectTimelineItem],
 	);
 
 	const handleAnnotationAdded = useCallback(
@@ -1510,7 +1548,7 @@ export default function VideoEditor() {
 			}
 
 			try {
-				const audioUrl = URL.createObjectURL(file);
+				const { audioUrl, sourceFilePath } = resolveImportedAudioReference(file);
 				const sourceDurationMs = await getAudioFileDurationMs(audioUrl);
 				const id = `audio-annotation-${nextAudioAnnotationIdRef.current++}`;
 				const clip = buildAudioAnnotationClip(
@@ -1520,27 +1558,25 @@ export default function VideoEditor() {
 					sourceDurationMs,
 					file.name,
 					totalMs,
+					sourceFilePath,
 				);
 				if (!clip) {
-					URL.revokeObjectURL(audioUrl);
+					if (audioUrl.startsWith("blob:")) {
+						URL.revokeObjectURL(audioUrl);
+					}
 					return;
 				}
 
 				pushState((prev) => ({
 					audioAnnotationClips: [...prev.audioAnnotationClips, clip],
 				}));
-				setSelectedAudioAnnotationId(id);
-				setSelectedAnnotationId(null);
-				setSelectedBlurId(null);
-				setSelectedZoomId(null);
-				setSelectedTrimId(null);
-				setSelectedSpeedId(null);
+				selectTimelineItem({ kind: "audio", id });
 				setIsPlaying(false);
 			} catch {
 				toast.error(t("audioAnnotation.failedToLoad"));
 			}
 		},
-		[currentTime, pushState, t],
+		[currentTime, pushState, selectTimelineItem, t],
 	);
 
 	const handleAudioAnnotationSpanChange = useCallback(
@@ -1592,7 +1628,13 @@ export default function VideoEditor() {
 	);
 
 	const handleAudioAnnotationReplace = useCallback(
-		(id: string, audioUrl: string, fileName: string, sourceDurationMs: number) => {
+		(
+			id: string,
+			audioUrl: string,
+			fileName: string,
+			sourceDurationMs: number,
+			sourceFilePath?: string,
+		) => {
 			const totalMs = Math.round(durationRef.current * 1000);
 			pushState((prev) => ({
 				audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
@@ -1605,6 +1647,7 @@ export default function VideoEditor() {
 						audioUrl,
 						fileName,
 						sourceDurationMs,
+						sourceFilePath,
 						durationMs: Math.min(clip.durationMs, sourceDurationMs, maxDuration, 30_000),
 					};
 				}),
@@ -1625,16 +1668,16 @@ export default function VideoEditor() {
 		[selectedAudioAnnotationId, pushState],
 	);
 
-	const handleSelectAudioAnnotation = useCallback((id: string | null) => {
-		setSelectedAudioAnnotationId(id);
-		if (id) {
-			setSelectedAnnotationId(null);
-			setSelectedBlurId(null);
-			setSelectedZoomId(null);
-			setSelectedTrimId(null);
-			setSelectedSpeedId(null);
-		}
-	}, []);
+	const handleSelectAudioAnnotation = useCallback(
+		(id: string | null) => {
+			if (id) {
+				selectTimelineItem({ kind: "audio", id });
+			} else {
+				setSelectedAudioAnnotationId(null);
+			}
+		},
+		[selectTimelineItem],
+	);
 
 	const handleAnnotationDuplicate = useCallback(
 		(id: string) => {
@@ -1658,13 +1701,9 @@ export default function VideoEditor() {
 
 				return { annotationRegions: [...prev.annotationRegions, duplicate] };
 			});
-			setSelectedAnnotationId(duplicateId);
-			setSelectedZoomId(null);
-			setSelectedTrimId(null);
-			setSelectedSpeedId(null);
-			setSelectedBlurId(null);
+			selectTimelineItem({ kind: "annotation", id: duplicateId });
 		},
-		[pushState],
+		[pushState, selectTimelineItem],
 	);
 
 	const handleAnnotationDelete = useCallback(

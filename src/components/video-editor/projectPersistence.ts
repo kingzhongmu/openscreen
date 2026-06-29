@@ -1,4 +1,5 @@
 import { normalizeTextAnimation } from "@/lib/annotationTextAnimation";
+import { normalizePersistedAudioUrl } from "@/lib/audioAnnotationPersistence";
 import { normalizeBlurColor, normalizeBlurType } from "@/lib/blurEffects";
 import { normalizeCursorThemeId } from "@/lib/cursor/cursorThemes";
 import type { ExportFormat, ExportQuality, GifFrameRate, GifSizePreset } from "@/lib/exporter";
@@ -336,7 +337,7 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 						anchorMs,
 						durationMs,
 						source: "import" as const,
-						audioUrl: clip.audioUrl,
+						audioUrl: normalizePersistedAudioUrl(clip.audioUrl),
 						fileName: typeof clip.fileName === "string" ? clip.fileName : undefined,
 						sourceDurationMs: isFiniteNumber(clip.sourceDurationMs)
 							? Math.max(1, Math.round(clip.sourceDurationMs))
