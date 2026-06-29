@@ -1,4 +1,11 @@
-import { type AnnotationRegion, type ArrowDirection } from "@/components/video-editor/types";
+import {
+	ARROW_ROTATIONS,
+	ARROW_VIEWBOX_SIZE,
+	computeArrowFitScale,
+	computeArrowGeometry,
+	normalizeFigureData,
+} from "@/components/video-editor/arrowGeometry";
+import { type AnnotationRegion, type FigureData } from "@/components/video-editor/types";
 import { getTextAnimationState } from "@/lib/annotationTextAnimation";
 import {
 	applyMosaicToImageData,
@@ -61,96 +68,65 @@ function tokenizeForWrap(line: string): string[] {
 	return tokens;
 }
 
-// SVG path data for each arrow direction
-const ARROW_PATHS: Record<ArrowDirection, string[]> = {
-	up: ["M 50 20 L 50 80", "M 50 20 L 35 35", "M 50 20 L 65 35"],
-	down: ["M 50 20 L 50 80", "M 50 80 L 35 65", "M 50 80 L 65 65"],
-	left: ["M 80 50 L 20 50", "M 20 50 L 35 35", "M 20 50 L 35 65"],
-	right: ["M 20 50 L 80 50", "M 80 50 L 65 35", "M 80 50 L 65 65"],
-	"up-right": ["M 25 75 L 75 25", "M 75 25 L 60 30", "M 75 25 L 70 40"],
-	"up-left": ["M 75 75 L 25 25", "M 25 25 L 40 30", "M 25 25 L 30 40"],
-	"down-right": ["M 25 25 L 75 75", "M 75 75 L 70 60", "M 75 75 L 60 70"],
-	"down-left": ["M 75 25 L 25 75", "M 25 75 L 30 60", "M 25 75 L 40 70"],
-};
-
-function parseSvgPath(
-	pathString: string,
-	scaleX: number,
-	scaleY: number,
-): Array<{ cmd: string; args: number[] }> {
-	const commands: Array<{ cmd: string; args: number[] }> = [];
-	const parts = pathString.trim().split(/\s+/);
-
-	let i = 0;
-	while (i < parts.length) {
-		const cmd = parts[i];
-		if (cmd === "M" || cmd === "L") {
-			const x = parseFloat(parts[i + 1]) * scaleX;
-			const y = parseFloat(parts[i + 2]) * scaleY;
-			commands.push({ cmd, args: [x, y] });
-			i += 3;
-		} else {
-			i++;
-		}
-	}
-
-	return commands;
-}
-
 function renderArrow(
 	ctx: CanvasRenderingContext2D,
-	direction: ArrowDirection,
-	color: string,
-	strokeWidth: number,
+	figureData: FigureData,
 	x: number,
 	y: number,
 	width: number,
 	height: number,
-	_scaleFactor: number,
+	scaleFactor: number,
 ) {
-	const paths = ARROW_PATHS[direction];
-	if (!paths) return;
+	const normalized = normalizeFigureData(figureData);
+	const geometry = computeArrowGeometry(normalized);
+	const rotation = ARROW_ROTATIONS[normalized.arrowDirection];
+	const fitScale = computeArrowFitScale(geometry, rotation);
+	const viewCenter = ARROW_VIEWBOX_SIZE / 2;
 
 	ctx.save();
-	ctx.translate(x, y);
 
-	const padding = 8 * _scaleFactor;
+	const padding = 8 * scaleFactor;
 	const availableWidth = Math.max(0, width - padding * 2);
 	const availableHeight = Math.max(0, height - padding * 2);
+	const containerScale = Math.min(
+		availableWidth / ARROW_VIEWBOX_SIZE,
+		availableHeight / ARROW_VIEWBOX_SIZE,
+	);
+	const offsetX = x + padding + (availableWidth - ARROW_VIEWBOX_SIZE * containerScale) / 2;
+	const offsetY = y + padding + (availableHeight - ARROW_VIEWBOX_SIZE * containerScale) / 2;
 
-	const scale = Math.min(availableWidth / 100, availableHeight / 100);
-
-	const offsetX = padding + (availableWidth - 100 * scale) / 2;
-	const offsetY = padding + (availableHeight - 100 * scale) / 2;
-
-	ctx.translate(offsetX, offsetY);
+	ctx.translate(offsetX + viewCenter * containerScale, offsetY + viewCenter * containerScale);
+	ctx.rotate((rotation * Math.PI) / 180);
+	ctx.scale(containerScale * fitScale, containerScale * fitScale);
+	ctx.translate(-geometry.centerX, -geometry.centerY);
 
 	ctx.shadowColor = "rgba(0, 0, 0, 0.3)";
-	ctx.shadowBlur = 8 * scale;
+	ctx.shadowBlur = 8;
 	ctx.shadowOffsetX = 0;
-	ctx.shadowOffsetY = 4 * scale;
+	ctx.shadowOffsetY = 4;
 
-	ctx.strokeStyle = color;
-	ctx.lineWidth = strokeWidth * scale;
-	ctx.lineCap = "round";
-	ctx.lineJoin = "round";
+	ctx.fillStyle = normalized.color;
 
-	// One shape so shadows/strokes don't overlap
-	ctx.beginPath();
-
-	for (const pathString of paths) {
-		const commands = parseSvgPath(pathString, scale, scale);
-
-		for (const { cmd, args } of commands) {
-			if (cmd === "M") {
-				ctx.moveTo(args[0], args[1]);
-			} else if (cmd === "L") {
-				ctx.lineTo(args[0], args[1]);
-			}
-		}
+	if (typeof ctx.roundRect === "function") {
+		ctx.beginPath();
+		ctx.roundRect(
+			geometry.shaft.x,
+			geometry.shaft.y,
+			geometry.shaft.width,
+			geometry.shaft.height,
+			geometry.shaft.rx,
+		);
+		ctx.fill();
+	} else {
+		ctx.fillRect(geometry.shaft.x, geometry.shaft.y, geometry.shaft.width, geometry.shaft.height);
 	}
 
-	ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(geometry.headPoints[0].x, geometry.headPoints[0].y);
+	ctx.lineTo(geometry.headPoints[1].x, geometry.headPoints[1].y);
+	ctx.lineTo(geometry.headPoints[2].x, geometry.headPoints[2].y);
+	ctx.closePath();
+	ctx.fill();
 
 	ctx.restore();
 }
@@ -475,17 +451,7 @@ export async function renderAnnotations(
 
 			case "figure":
 				if (annotation.figureData) {
-					renderArrow(
-						ctx,
-						annotation.figureData.arrowDirection,
-						annotation.figureData.color,
-						annotation.figureData.strokeWidth,
-						x,
-						y,
-						width,
-						height,
-						scaleFactor,
-					);
+					renderArrow(ctx, annotation.figureData, x, y, width, height, scaleFactor);
 				}
 				break;
 

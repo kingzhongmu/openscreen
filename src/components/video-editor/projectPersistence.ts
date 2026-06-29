@@ -6,6 +6,7 @@ import type { ProjectMedia } from "@/lib/recordingSession";
 import { normalizeProjectMedia } from "@/lib/recordingSession";
 import { DEFAULT_WALLPAPER, WALLPAPER_PATHS } from "@/lib/wallpaper";
 import { ASPECT_RATIOS, type AspectRatio, isPortraitAspectRatio } from "@/utils/aspectRatioUtils";
+import { normalizeFigureData } from "./arrowGeometry";
 import {
 	DEFAULT_EDITOR_APPEARANCE_SETTINGS,
 	DEFAULT_EDITOR_LAYOUT_SETTINGS,
@@ -383,10 +384,10 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 						},
 						zIndex: isFiniteNumber(region.zIndex) ? region.zIndex : index + 1,
 						figureData: region.figureData
-							? {
+							? normalizeFigureData({
 									...DEFAULT_FIGURE_DATA,
 									...region.figureData,
-								}
+								})
 							: undefined,
 						blurData:
 							region.blurData && typeof region.blurData === "object"

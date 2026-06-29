@@ -229,7 +229,10 @@ export type ArrowDirection =
 export interface FigureData {
 	arrowDirection: ArrowDirection;
 	color: string;
-	strokeWidth: number;
+	shaftWidth: number;
+	shaftLength: number;
+	headWidth: number;
+	headLength: number;
 }
 
 export type BlurShape = "rectangle" | "oval" | "freehand";
@@ -329,7 +332,10 @@ export const DEFAULT_ANNOTATION_STYLE: AnnotationTextStyle = {
 export const DEFAULT_FIGURE_DATA: FigureData = {
 	arrowDirection: "right",
 	color: "#34B27B",
-	strokeWidth: 4,
+	shaftWidth: 30,
+	shaftLength: 80,
+	headWidth: 40,
+	headLength: 30,
 };
 
 export const DEFAULT_BLUR_FREEHAND_POINTS: Array<{ x: number; y: number }> = [

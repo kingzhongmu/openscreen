@@ -7,13 +7,15 @@ import {
 	getNormalizedMosaicBlockSize,
 } from "@/lib/blurEffects";
 import { cn } from "@/lib/utils";
-import { getArrowComponent } from "./ArrowSvgs";
+import { ParametricArrow } from "./ArrowSvgs";
+import { normalizeFigureData } from "./arrowGeometry";
 import {
 	type AnnotationRegion,
 	type BlurData,
 	DEFAULT_BLUR_BLOCK_SIZE,
 	DEFAULT_BLUR_DATA,
 	DEFAULT_BLUR_INTENSITY,
+	DEFAULT_FIGURE_DATA,
 } from "./types";
 
 const FREEHAND_POINT_THRESHOLD = 1;
@@ -199,12 +201,8 @@ export function AnnotationOverlay({
 	]);
 
 	const renderArrow = () => {
-		const direction = annotation.figureData?.arrowDirection || "right";
-		const color = annotation.figureData?.color || "#34B27B";
-		const strokeWidth = annotation.figureData?.strokeWidth || 4;
-
-		const ArrowComponent = getArrowComponent(direction);
-		return <ArrowComponent color={color} strokeWidth={strokeWidth} />;
+		const figureData = normalizeFigureData(annotation.figureData ?? DEFAULT_FIGURE_DATA);
+		return <ParametricArrow direction={figureData.arrowDirection} figureData={figureData} />;
 	};
 
 	const normalizePoint = (event: PointerEvent<HTMLDivElement>) => {

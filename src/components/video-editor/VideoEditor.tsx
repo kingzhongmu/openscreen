@@ -26,6 +26,12 @@ import { INITIAL_EDITOR_STATE, useEditorHistory } from "@/hooks/useEditorHistory
 import { type Locale } from "@/i18n/config";
 import { getAvailableLocales, getLocaleName } from "@/i18n/loader";
 import {
+	getAnnotationFigureDataPreset,
+	getAnnotationTextStylePreset,
+	saveAnnotationFigureDataPreset,
+	saveAnnotationTextStylePreset,
+} from "@/lib/annotationPreferences";
+import {
 	captionSegmentsToAnnotationRegions,
 	extractMono16kFromVideoUrl,
 	MAX_CAPTION_AUDIO_SEC,
@@ -96,9 +102,7 @@ import {
 	clampFocusToDepth,
 	DEFAULT_ANNOTATION_POSITION,
 	DEFAULT_ANNOTATION_SIZE,
-	DEFAULT_ANNOTATION_STYLE,
 	DEFAULT_BLUR_DATA,
-	DEFAULT_FIGURE_DATA,
 	DEFAULT_PLAYBACK_SPEED,
 	DEFAULT_ZOOM_DEPTH,
 	type FigureData,
@@ -1364,7 +1368,7 @@ export default function VideoEditor() {
 				content: "Enter text...",
 				position: { ...DEFAULT_ANNOTATION_POSITION },
 				size: { ...DEFAULT_ANNOTATION_SIZE },
-				style: { ...DEFAULT_ANNOTATION_STYLE },
+				style: { ...getAnnotationTextStylePreset() },
 				zIndex,
 			};
 			pushState((prev) => ({
@@ -1391,7 +1395,7 @@ export default function VideoEditor() {
 				content: "",
 				position: { ...DEFAULT_ANNOTATION_POSITION },
 				size: { ...DEFAULT_ANNOTATION_SIZE },
-				style: { ...DEFAULT_ANNOTATION_STYLE },
+				style: { ...getAnnotationTextStylePreset() },
 				zIndex,
 				blurData: { ...DEFAULT_BLUR_DATA },
 			};
@@ -1506,7 +1510,7 @@ export default function VideoEditor() {
 					} else if (type === "figure") {
 						updatedRegion.content = "";
 						if (!region.figureData) {
-							updatedRegion.figureData = { ...DEFAULT_FIGURE_DATA };
+							updatedRegion.figureData = { ...getAnnotationFigureDataPreset() };
 						}
 					} else if (type === "blur") {
 						updatedRegion.content = "";
@@ -1532,6 +1536,7 @@ export default function VideoEditor() {
 
 	const handleAnnotationStyleChange = useCallback(
 		(id: string, style: Partial<AnnotationRegion["style"]>) => {
+			saveAnnotationTextStylePreset(style);
 			pushState((prev) => {
 				const touched = prev.annotationRegions.find((r) => r.id === id);
 				const syncAutoCaptions = touched?.annotationSource === "auto-caption";
@@ -1550,6 +1555,7 @@ export default function VideoEditor() {
 
 	const handleAnnotationFigureDataChange = useCallback(
 		(id: string, figureData: FigureData) => {
+			saveAnnotationFigureDataPreset(figureData);
 			pushState((prev) => ({
 				annotationRegions: prev.annotationRegions.map((region) =>
 					region.id === id ? { ...region, figureData } : region,

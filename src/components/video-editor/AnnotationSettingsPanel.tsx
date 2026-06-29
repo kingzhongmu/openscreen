@@ -28,16 +28,28 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useScopedT } from "@/contexts/I18nContext";
+import {
+	restoreAnnotationFigureDataDefaults,
+	restoreAnnotationTextStyleDefaults,
+} from "@/lib/annotationPreferences";
 import { normalizeTextAnimation, TEXT_ANIMATION_OPTIONS } from "@/lib/annotationTextAnimation";
 import { type CustomFont, getCustomFonts } from "@/lib/customFonts";
 import { cn } from "@/lib/utils";
 import ColorPicker from "../ui/color-picker";
 import { AddCustomFontDialog } from "./AddCustomFontDialog";
-import { getArrowComponent } from "./ArrowSvgs";
+import { ParametricArrow } from "./ArrowSvgs";
+import {
+	ARROW_HEAD_LENGTH,
+	ARROW_HEAD_WIDTH,
+	ARROW_SHAFT_LENGTH,
+	ARROW_SHAFT_WIDTH,
+	normalizeFigureData,
+} from "./arrowGeometry";
 import {
 	type AnnotationRegion,
 	type AnnotationType,
 	type ArrowDirection,
+	DEFAULT_FIGURE_DATA,
 	type FigureData,
 } from "./types";
 
@@ -495,6 +507,19 @@ export function AnnotationSettingsPanel({
 								</div>
 							</div>
 						</div>
+
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="w-full bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all"
+							onClick={() => {
+								const defaults = restoreAnnotationTextStyleDefaults();
+								onStyleChange(defaults);
+							}}
+						>
+							{t("annotation.restoreDefaults")}
+						</Button>
 					</TabsContent>
 
 					{/* Image Upload */}
@@ -531,115 +556,179 @@ export function AnnotationSettingsPanel({
 					</TabsContent>
 
 					<TabsContent value="figure" className="mt-0 space-y-4">
-						<div>
-							<label className="text-xs font-medium text-slate-200 mb-3 block">
-								{t("annotation.arrowDirection")}
-							</label>
-							<div className="grid grid-cols-4 gap-2">
-								{(
-									[
-										"up",
-										"down",
-										"left",
-										"right",
-										"up-right",
-										"up-left",
-										"down-right",
-										"down-left",
-									] as ArrowDirection[]
-								).map((direction) => {
-									const ArrowComponent = getArrowComponent(direction);
-									return (
-										<button
-											key={direction}
-											onClick={() => {
-												const newFigureData: FigureData = {
-													...annotation.figureData!,
-													arrowDirection: direction,
-												};
-												onFigureDataChange?.(newFigureData);
+						{(() => {
+							const figureData = normalizeFigureData(annotation.figureData ?? DEFAULT_FIGURE_DATA);
+							const updateFigureData = (patch: Partial<FigureData>) => {
+								onFigureDataChange?.({ ...figureData, ...patch });
+							};
+
+							return (
+								<>
+									<div>
+										<label className="text-xs font-medium text-slate-200 mb-3 block">
+											{t("annotation.arrowDirection")}
+										</label>
+										<div className="grid grid-cols-4 gap-2">
+											{(
+												[
+													"up",
+													"down",
+													"left",
+													"right",
+													"up-right",
+													"up-left",
+													"down-right",
+													"down-left",
+												] as ArrowDirection[]
+											).map((direction) => (
+												<button
+													key={direction}
+													type="button"
+													onClick={() => {
+														updateFigureData({ arrowDirection: direction });
+													}}
+													className={cn(
+														"h-16 rounded-lg border flex items-center justify-center transition-all p-2",
+														figureData.arrowDirection === direction
+															? "bg-[#34B27B] border-[#34B27B]"
+															: "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20",
+													)}
+												>
+													<ParametricArrow
+														direction={direction}
+														figureData={{
+															...figureData,
+															color:
+																figureData.arrowDirection === direction ? "#ffffff" : "#94a3b8",
+														}}
+													/>
+												</button>
+											))}
+										</div>
+									</div>
+
+									<div>
+										<label className="text-xs font-medium text-slate-200 mb-2 block">
+											{t("annotation.arrowShaftWidth", {
+												value: String(figureData.shaftWidth),
+											})}
+										</label>
+										<Slider
+											value={[figureData.shaftWidth]}
+											onValueChange={([value]) => {
+												updateFigureData({ shaftWidth: value });
 											}}
-											className={cn(
-												"h-16 rounded-lg border flex items-center justify-center transition-all p-2",
-												annotation.figureData?.arrowDirection === direction
-													? "bg-[#34B27B] border-[#34B27B]"
-													: "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20",
-											)}
-										>
-											<ArrowComponent
-												color={
-													annotation.figureData?.arrowDirection === direction
-														? "#ffffff"
-														: "#94a3b8"
-												}
-												strokeWidth={3}
-											/>
-										</button>
-									);
-								})}
-							</div>
-						</div>
-
-						<div>
-							<label className="text-xs font-medium text-slate-200 mb-2 block">
-								{t("annotation.strokeWidth", {
-									width: String(annotation.figureData?.strokeWidth || 4),
-								})}
-							</label>
-							<Slider
-								value={[annotation.figureData?.strokeWidth || 4]}
-								onValueChange={([value]) => {
-									const newFigureData: FigureData = {
-										...annotation.figureData!,
-										strokeWidth: value,
-									};
-									onFigureDataChange?.(newFigureData);
-								}}
-								min={1}
-								max={6}
-								step={1}
-								className="w-full"
-							/>
-						</div>
-
-						<div>
-							<label className="text-xs font-medium text-slate-200 mb-2 block">
-								{t("annotation.arrowColor")}
-							</label>
-							<Popover>
-								<PopoverTrigger asChild>
-									<Button
-										variant="outline"
-										className="w-full h-10 justify-start gap-2 bg-white/5 border-white/10 hover:bg-white/10"
-									>
-										<div
-											className="w-5 h-5 rounded-full border border-white/20"
-											style={{ backgroundColor: annotation.figureData?.color || "#34B27B" }}
+											min={ARROW_SHAFT_WIDTH.min}
+											max={ARROW_SHAFT_WIDTH.max}
+											step={1}
+											className="w-full"
 										/>
-										<span className="text-xs text-slate-300 truncate flex-1 text-left">
-											{annotation.figureData?.color || "#34B27B"}
-										</span>
-										<ChevronDown className="h-3 w-3 opacity-50" />
+									</div>
+
+									<div>
+										<label className="text-xs font-medium text-slate-200 mb-2 block">
+											{t("annotation.arrowShaftLength", {
+												value: String(figureData.shaftLength),
+											})}
+										</label>
+										<Slider
+											value={[figureData.shaftLength]}
+											onValueChange={([value]) => {
+												updateFigureData({ shaftLength: value });
+											}}
+											min={ARROW_SHAFT_LENGTH.min}
+											max={ARROW_SHAFT_LENGTH.max}
+											step={1}
+											className="w-full"
+										/>
+									</div>
+
+									<div>
+										<label className="text-xs font-medium text-slate-200 mb-2 block">
+											{t("annotation.arrowHeadWidth", {
+												value: String(figureData.headWidth),
+											})}
+										</label>
+										<Slider
+											value={[figureData.headWidth]}
+											onValueChange={([value]) => {
+												updateFigureData({ headWidth: value });
+											}}
+											min={ARROW_HEAD_WIDTH.min}
+											max={ARROW_HEAD_WIDTH.max}
+											step={1}
+											className="w-full"
+										/>
+									</div>
+
+									<div>
+										<label className="text-xs font-medium text-slate-200 mb-2 block">
+											{t("annotation.arrowHeadLength", {
+												value: String(figureData.headLength),
+											})}
+										</label>
+										<Slider
+											value={[figureData.headLength]}
+											onValueChange={([value]) => {
+												updateFigureData({ headLength: value });
+											}}
+											min={ARROW_HEAD_LENGTH.min}
+											max={ARROW_HEAD_LENGTH.max}
+											step={1}
+											className="w-full"
+										/>
+									</div>
+
+									<div>
+										<label className="text-xs font-medium text-slate-200 mb-2 block">
+											{t("annotation.arrowColor")}
+										</label>
+										<Popover>
+											<PopoverTrigger asChild>
+												<Button
+													variant="outline"
+													className="w-full h-10 justify-start gap-2 bg-white/5 border-white/10 hover:bg-white/10"
+												>
+													<div
+														className="w-5 h-5 rounded-full border border-white/20"
+														style={{ backgroundColor: figureData.color }}
+													/>
+													<span className="text-xs text-slate-300 truncate flex-1 text-left">
+														{figureData.color}
+													</span>
+													<ChevronDown className="h-3 w-3 opacity-50" />
+												</Button>
+											</PopoverTrigger>
+											<PopoverContent className="w-[260px] p-3 bg-[#1a1a1c] border border-white/10 rounded-xl shadow-xl">
+												<Block
+													color={figureData.color}
+													colors={colorPalette}
+													onChange={(color) => {
+														updateFigureData({ color: color.hex });
+													}}
+													style={{
+														borderRadius: "8px",
+													}}
+												/>
+											</PopoverContent>
+										</Popover>
+									</div>
+
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="w-full bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all"
+										onClick={() => {
+											const defaults = restoreAnnotationFigureDataDefaults();
+											onFigureDataChange?.(defaults);
+										}}
+									>
+										{t("annotation.restoreDefaults")}
 									</Button>
-								</PopoverTrigger>
-								<PopoverContent className="w-[260px] p-3 bg-[#1a1a1c] border border-white/10 rounded-xl shadow-xl">
-									<Block
-										color={annotation.figureData?.color || "#34B27B"}
-										colors={colorPalette}
-										onChange={(color) => {
-											const newFigureData: FigureData = {
-												...annotation.figureData!,
-												color: color.hex,
-											};
-											onFigureDataChange?.(newFigureData);
-										}}
-										style={{
-											borderRadius: "8px",
-										}}
-									/>
-								</PopoverContent>
-							</Popover>
-						</div>
+								</>
+							);
+						})()}
 					</TabsContent>
 				</Tabs>
 
