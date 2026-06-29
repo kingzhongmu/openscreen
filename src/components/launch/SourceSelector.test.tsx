@@ -75,4 +75,42 @@ describe("SourceSelector", () => {
 		});
 		expect(getSources).toHaveBeenCalledTimes(2);
 	});
+
+	it("reloads capture sources from the footer refresh button", async () => {
+		const getSources = vi
+			.fn()
+			.mockResolvedValueOnce([
+				{
+					id: "window:123:0",
+					name: "App — Old Window",
+					thumbnail: "data:image/png;base64,abc",
+					display_id: "",
+					appIcon: null,
+				},
+			])
+			.mockResolvedValueOnce([
+				{
+					id: "window:456:0",
+					name: "App — New Window",
+					thumbnail: "data:image/png;base64,def",
+					display_id: "",
+					appIcon: null,
+				},
+			]);
+		window.electronAPI = {
+			...window.electronAPI,
+			getSources,
+			selectSource: vi.fn(),
+		} as typeof window.electronAPI;
+
+		render(<SourceSelector />);
+
+		await screen.findByText("Old Window");
+		fireEvent.click(screen.getByTestId("source-selector-refresh-button"));
+
+		await waitFor(() => {
+			expect(screen.getByText("New Window")).toBeInTheDocument();
+		});
+		expect(getSources).toHaveBeenCalledTimes(2);
+	});
 });

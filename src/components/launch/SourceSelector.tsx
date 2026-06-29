@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { MdCheck } from "react-icons/md";
+import { MdCheck, MdRefresh } from "react-icons/md";
 import { useScopedT } from "@/contexts/I18nContext";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
@@ -19,10 +19,16 @@ export function SourceSelector() {
 	const [sources, setSources] = useState<DesktopSource[]>([]);
 	const [selectedSource, setSelectedSource] = useState<DesktopSource | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [refreshing, setRefreshing] = useState(false);
 	const [loadFailed, setLoadFailed] = useState(false);
 
-	const fetchSources = useCallback(async () => {
-		setLoading(true);
+	const fetchSources = useCallback(async (options?: { refresh?: boolean }) => {
+		const isRefresh = options?.refresh === true;
+		if (isRefresh) {
+			setRefreshing(true);
+		} else {
+			setLoading(true);
+		}
 		setLoadFailed(false);
 		try {
 			const rawSources = await window.electronAPI.getSources({
@@ -51,7 +57,11 @@ export function SourceSelector() {
 			setSelectedSource(null);
 			setLoadFailed(true);
 		} finally {
-			setLoading(false);
+			if (isRefresh) {
+				setRefreshing(false);
+			} else {
+				setLoading(false);
+			}
 		}
 	}, []);
 
@@ -188,6 +198,16 @@ export function SourceSelector() {
 					className="h-8 rounded-lg px-5 text-[11px] text-zinc-400 transition-transform duration-150 hover:bg-white/5 hover:text-white active:scale-95"
 				>
 					{tc("actions.cancel")}
+				</Button>
+				<Button
+					data-testid="source-selector-refresh-button"
+					variant="ghost"
+					onClick={() => void fetchSources({ refresh: true })}
+					disabled={refreshing}
+					className="h-8 gap-1.5 rounded-lg px-4 text-[11px] text-zinc-400 transition-transform duration-150 hover:bg-white/5 hover:text-white active:scale-95 disabled:opacity-50"
+				>
+					<MdRefresh size={14} className={refreshing ? "animate-spin" : undefined} />
+					{tc("actions.reload")}
 				</Button>
 				<Button
 					data-testid="source-selector-share-button"
