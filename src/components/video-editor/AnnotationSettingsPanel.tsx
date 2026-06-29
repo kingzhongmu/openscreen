@@ -25,6 +25,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useScopedT } from "@/contexts/I18nContext";
@@ -35,6 +36,7 @@ import {
 import { normalizeTextAnimation, TEXT_ANIMATION_OPTIONS } from "@/lib/annotationTextAnimation";
 import { ARROW_ANIMATION_OPTIONS, normalizeArrowAnimation } from "@/lib/arrowAnimation";
 import { type CustomFont, getCustomFonts } from "@/lib/customFonts";
+import { getAnnotationHoldDurationMs } from "@/lib/holdRegions";
 import { cn } from "@/lib/utils";
 import ColorPicker from "../ui/color-picker";
 import { AddCustomFontDialog } from "./AddCustomFontDialog";
@@ -57,6 +59,8 @@ import {
 	type ArrowDirection,
 	DEFAULT_FIGURE_DATA,
 	type FigureData,
+	MAX_HOLD_DURATION_MS,
+	MIN_HOLD_DURATION_MS,
 } from "./types";
 
 interface AnnotationSettingsPanelProps {
@@ -66,6 +70,8 @@ interface AnnotationSettingsPanelProps {
 	onTypeChange: (type: AnnotationType) => void;
 	onStyleChange: (style: Partial<AnnotationRegion["style"]>) => void;
 	onDurationChange?: (durationMs: number) => void;
+	onFreezeDuringAnnotationChange?: (enabled: boolean) => void;
+	onHoldDurationChange?: (holdDurationMs: number) => void;
 	onFigureDataChange?: (figureData: FigureData) => void;
 	onDuplicate?: () => void;
 	onDelete: () => void;
@@ -110,6 +116,8 @@ export function AnnotationSettingsPanel({
 	onTypeChange,
 	onStyleChange,
 	onDurationChange,
+	onFreezeDuringAnnotationChange,
+	onHoldDurationChange,
 	onFigureDataChange,
 	onDuplicate,
 	onDelete,
@@ -189,6 +197,7 @@ export function AnnotationSettingsPanel({
 	};
 
 	const durationMs = Math.max(1, annotation.endMs - annotation.startMs);
+	const holdDurationMs = getAnnotationHoldDurationMs(annotation);
 	const maxDurationMs = videoDurationMs
 		? Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, videoDurationMs - annotation.startMs)
 		: MAX_POSITION_ANNOTATION_DURATION_MS;
@@ -240,6 +249,49 @@ export function AnnotationSettingsPanel({
 								</span>
 							</div>
 						</div>
+					</div>
+				)}
+
+				{onFreezeDuringAnnotationChange && (
+					<div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 space-y-3">
+						<div className="flex items-center justify-between gap-3">
+							<div>
+								<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+									{t("annotation.freezeDuringAnnotation")}
+								</div>
+								<div className="mt-1 text-xs text-slate-400">
+									{t("annotation.freezeDuringAnnotationHint")}
+								</div>
+							</div>
+							<Switch
+								checked={Boolean(annotation.freezeDuringAnnotation)}
+								onCheckedChange={onFreezeDuringAnnotationChange}
+							/>
+						</div>
+						{annotation.freezeDuringAnnotation && onHoldDurationChange && (
+							<div>
+								<div className="mb-2 flex items-center justify-between gap-3">
+									<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+										{t("annotation.holdDuration")}
+									</div>
+									<div className="text-sm font-semibold tabular-nums text-[#B4A046]">
+										{(holdDurationMs / 1000).toFixed(1)}s
+									</div>
+								</div>
+								<Slider
+									value={[holdDurationMs]}
+									min={Math.max(MIN_HOLD_DURATION_MS, durationMs)}
+									max={MAX_HOLD_DURATION_MS}
+									step={100}
+									onValueChange={([value]) => onHoldDurationChange(value)}
+									className="py-1"
+								/>
+								<div className="mt-1 flex justify-between text-[10px] text-slate-500 tabular-nums">
+									<span>{(Math.max(MIN_HOLD_DURATION_MS, durationMs) / 1000).toFixed(1)}s</span>
+									<span>{(MAX_HOLD_DURATION_MS / 1000).toFixed(0)}s</span>
+								</div>
+							</div>
+						)}
 					</div>
 				)}
 

@@ -675,19 +675,25 @@ export class StreamingVideoDecoder {
 		targetFrameRate: number,
 		trimRegions?: TrimRegion[],
 		speedRegions?: SpeedRegion[],
+		holdRegions?: import("@/components/video-editor/types").HoldRegion[],
 	): { effectiveDuration: number; totalFrames: number } {
 		if (!this.metadata) throw new Error("Must call loadMetadata() first");
 		const trimSegments = this.computeSegments(this.metadata.duration, trimRegions);
 		const segments = this.splitBySpeed(trimSegments, speedRegions);
+		const holdDurationSec =
+			(holdRegions?.reduce((sum, hold) => sum + hold.holdDurationMs, 0) ?? 0) / 1000;
+		const holdFrames = Math.round(holdDurationSec * targetFrameRate);
+		const baseDuration = segments.reduce(
+			(sum, seg) => sum + (seg.endSec - seg.startSec) / seg.speed,
+			0,
+		);
+		const baseFrames = segments.reduce((sum, seg) => {
+			const segDur = seg.endSec - seg.startSec - EPSILON_SEC;
+			return sum + Math.max(0, Math.ceil((segDur / seg.speed) * targetFrameRate));
+		}, 0);
 		return {
-			effectiveDuration: segments.reduce(
-				(sum, seg) => sum + (seg.endSec - seg.startSec) / seg.speed,
-				0,
-			),
-			totalFrames: segments.reduce((sum, seg) => {
-				const segDur = seg.endSec - seg.startSec - EPSILON_SEC;
-				return sum + Math.max(0, Math.ceil((segDur / seg.speed) * targetFrameRate));
-			}, 0),
+			effectiveDuration: baseDuration + holdDurationSec,
+			totalFrames: baseFrames + holdFrames,
 		};
 	}
 

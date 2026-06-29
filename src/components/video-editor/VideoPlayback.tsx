@@ -39,6 +39,7 @@ import {
 	resolveInterpolatedNativeCursorFrame,
 	resolveNativeCursorRenderAsset,
 } from "@/lib/cursor/nativeCursor";
+import { isOutputTimeInHold } from "@/lib/timelineMapping";
 import { classifyWallpaper, DEFAULT_WALLPAPER, resolveImageWallpaperUrl } from "@/lib/wallpaper";
 import { getCssClipPath } from "@/lib/webcamMaskShapes";
 import type { CursorRecordingData } from "@/native/contracts";
@@ -76,6 +77,11 @@ import {
 	preloadCursorAssets,
 } from "./videoPlayback/cursorRenderer";
 import { clampFocusToScale } from "./videoPlayback/focusUtils";
+import {
+	resolveAnnotationAnimationTimeMs,
+	resolveAudioAnnotationOutputAnchorMs,
+} from "./videoPlayback/holdPlayback";
+import { holdPlaybackLog } from "./videoPlayback/holdPlaybackDebug";
 import { layoutVideoContent as layoutVideoContentUtil } from "./videoPlayback/layoutUtils";
 import { clamp01 } from "./videoPlayback/mathUtils";
 import { updateOverlayIndicator } from "./videoPlayback/overlayUtils";
@@ -102,7 +108,7 @@ interface VideoPlaybackProps {
 	onWebcamPositionChange?: (position: { cx: number; cy: number }) => void;
 	onWebcamPositionDragEnd?: () => void;
 	onDurationChange: (duration: number) => void;
-	onTimeUpdate: (time: number) => void;
+	onTimeUpdate: (time: number, outputTimeMs?: number) => void;
 	currentTime: number;
 	onPlayStateChange: (playing: boolean) => void;
 	onError: (error: string) => void;
@@ -122,6 +128,7 @@ interface VideoPlaybackProps {
 	cropRegion?: import("./types").CropRegion;
 	trimRegions?: TrimRegion[];
 	speedRegions?: SpeedRegion[];
+	holdRegions?: import("./types").HoldRegion[];
 	aspectRatio: AspectRatio;
 	cursorRecordingData?: CursorRecordingData | null;
 	annotationRegions?: AnnotationRegion[];
@@ -251,6 +258,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			cropRegion,
 			trimRegions = [],
 			speedRegions = [],
+			holdRegions = [],
 			aspectRatio,
 			cursorRecordingData,
 			annotationRegions = [],
@@ -296,6 +304,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const timeUpdateAnimationRef = useRef<number | null>(null);
 		const [pixiReady, setPixiReady] = useState(false);
 		const [videoReady, setVideoReady] = useState(false);
+		const [outputPlaybackTimeMs, setOutputPlaybackTimeMs] = useState(0);
+		const setOutputPlaybackTimeMsRef = useRef(setOutputPlaybackTimeMs);
+		setOutputPlaybackTimeMsRef.current = setOutputPlaybackTimeMs;
 		const [supplementalAudioPath, setSupplementalAudioPath] = useState<string | null>(null);
 		const [overlaySize, setOverlaySize] = useState({ width: 800, height: 600 });
 		const [overlayElement, setOverlayElement] = useState<HTMLDivElement | null>(null);
@@ -348,6 +359,13 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const layoutVideoContentRef = useRef<(() => void) | null>(null);
 		const trimRegionsRef = useRef<TrimRegion[]>([]);
 		const speedRegionsRef = useRef<SpeedRegion[]>([]);
+		const holdRegionsRef = useRef<import("./types").HoldRegion[]>([]);
+		const sourceDurationMsRef = useRef(0);
+		const outputTimeRef = useRef(0);
+		const holdSeekInProgressRef = useRef(false);
+		const syncPreviewAudioRef = useRef<() => void>(() => {
+			/* populated in useEffect */
+		});
 		const motionBlurAmountRef = useRef(motionBlurAmount);
 		const cursorOverlayRef = useRef<PixiCursorOverlay | null>(null);
 		const showCursorRef = useRef(showCursor);
@@ -393,6 +411,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				const normalizedDuration = Math.round(resolvedDuration * 1000) / 1000;
 				if (lastResolvedDurationRef.current !== normalizedDuration) {
 					lastResolvedDurationRef.current = normalizedDuration;
+					sourceDurationMsRef.current = Math.round(normalizedDuration * 1000);
 					onDurationChange(normalizedDuration);
 				}
 
@@ -804,6 +823,96 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		}, [speedRegions]);
 
 		useEffect(() => {
+			holdRegionsRef.current = holdRegions;
+			if (holdRegions.length > 0) {
+				holdPlaybackLog("hold-regions-updated", {
+					holdRegions,
+					currentTimeMs: Math.round(currentTime * 1000),
+					videoCurrentTimeMs: Math.round((videoRef.current?.currentTime ?? 0) * 1000),
+					sourceDurationMs: sourceDurationMsRef.current,
+				});
+			}
+		}, [holdRegions, currentTime]);
+
+		const syncPreviewAudio = useCallback(() => {
+			const video = videoRef.current;
+			const supplementalAudio = supplementalAudioRef.current;
+			const outputMs = outputTimeRef.current;
+			const sourceTimeMs = (video?.currentTime ?? 0) * 1000;
+			const holds = holdRegionsRef.current;
+			const hasHolds = holds.length > 0;
+
+			if (supplementalAudio && supplementalAudioPath && video) {
+				const activeSpeedRegion =
+					speedRegionsRef.current.find(
+						(region) => sourceTimeMs >= region.startMs && sourceTimeMs < region.endMs,
+					) ?? null;
+				supplementalAudio.playbackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1;
+
+				if (hasHolds && isOutputTimeInHold(outputMs, holds)) {
+					supplementalAudio.pause();
+				} else if (!isPlayingRef.current) {
+					supplementalAudio.pause();
+					if (Math.abs(supplementalAudio.currentTime - video.currentTime) > 0.05) {
+						supplementalAudio.currentTime = video.currentTime;
+					}
+				} else {
+					if (Math.abs(supplementalAudio.currentTime - video.currentTime) > 0.15) {
+						supplementalAudio.currentTime = video.currentTime;
+					}
+					supplementalAudio.play().catch(() => {
+						// Keep video playback running even if supplemental preview audio is unavailable.
+					});
+				}
+			}
+
+			for (const clip of audioAnnotationClips) {
+				const element = clipAudioRefs.current.get(clip.id);
+				if (!element) {
+					continue;
+				}
+
+				const anchorMs = hasHolds
+					? resolveAudioAnnotationOutputAnchorMs(clip.anchorMs, holds)
+					: clip.anchorMs;
+				const timeMs = hasHolds ? outputMs : sourceTimeMs;
+				const inRange = timeMs >= anchorMs && timeMs < anchorMs + clip.durationMs;
+				const offsetSec = (timeMs - anchorMs) / 1000;
+
+				if (!inRange) {
+					if (!element.paused) {
+						element.pause();
+					}
+					continue;
+				}
+
+				if (!isPlayingRef.current) {
+					element.pause();
+					if (Math.abs(element.currentTime - offsetSec) > 0.05) {
+						element.currentTime = offsetSec;
+					}
+					continue;
+				}
+
+				if (Math.abs(element.currentTime - offsetSec) > 0.15) {
+					element.currentTime = offsetSec;
+				}
+				element.play().catch(() => {
+					// Ignore preview audio failures.
+				});
+			}
+		}, [audioAnnotationClips, supplementalAudioPath]);
+
+		useEffect(() => {
+			syncPreviewAudioRef.current = syncPreviewAudio;
+		}, [syncPreviewAudio]);
+
+		// biome-ignore lint/correctness/useExhaustiveDependencies: re-sync preview audio when play state changes
+		useEffect(() => {
+			syncPreviewAudio();
+		}, [syncPreviewAudio, isPlaying]);
+
+		useEffect(() => {
 			motionBlurAmountRef.current = motionBlurAmount;
 		}, [motionBlurAmount]);
 
@@ -1131,34 +1240,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		}, [videoPath]);
 
 		useEffect(() => {
-			const video = videoRef.current;
-			const supplementalAudio = supplementalAudioRef.current;
-			if (!video || !supplementalAudio || !supplementalAudioPath) {
-				return;
+			currentTimeRef.current = currentTime * 1000;
+			if (holdRegions.length === 0) {
+				setOutputPlaybackTimeMs(Math.round(currentTime * 1000));
 			}
-
-			const activeSpeedRegion =
-				speedRegions.find(
-					(region) => currentTime * 1000 >= region.startMs && currentTime * 1000 < region.endMs,
-				) ?? null;
-			supplementalAudio.playbackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1;
-
-			if (!isPlaying) {
-				supplementalAudio.pause();
-				if (Math.abs(supplementalAudio.currentTime - currentTime) > 0.05) {
-					supplementalAudio.currentTime = currentTime;
-				}
-				return;
-			}
-
-			if (Math.abs(supplementalAudio.currentTime - video.currentTime) > 0.15) {
-				supplementalAudio.currentTime = video.currentTime;
-			}
-
-			supplementalAudio.play().catch(() => {
-				// Keep video playback running even if supplemental preview audio is unavailable.
-			});
-		}, [currentTime, isPlaying, speedRegions, supplementalAudioPath]);
+			syncPreviewAudio();
+		}, [currentTime, holdRegions, syncPreviewAudio]);
 
 		useEffect(() => {
 			const map = clipAudioRefs.current;
@@ -1185,42 +1272,6 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				element.volume = clip.volume ?? 1;
 			}
 		}, [audioAnnotationClips]);
-
-		useEffect(() => {
-			const timeMs = currentTime * 1000;
-
-			for (const clip of audioAnnotationClips) {
-				const element = clipAudioRefs.current.get(clip.id);
-				if (!element) {
-					continue;
-				}
-
-				const inRange = timeMs >= clip.anchorMs && timeMs < clip.anchorMs + clip.durationMs;
-				const offsetSec = (timeMs - clip.anchorMs) / 1000;
-
-				if (!inRange) {
-					if (!element.paused) {
-						element.pause();
-					}
-					continue;
-				}
-
-				if (!isPlaying) {
-					element.pause();
-					if (Math.abs(element.currentTime - offsetSec) > 0.05) {
-						element.currentTime = offsetSec;
-					}
-					continue;
-				}
-
-				if (Math.abs(element.currentTime - offsetSec) > 0.15) {
-					element.currentTime = offsetSec;
-				}
-				element.play().catch(() => {
-					// Preview audio is best-effort; keep video playback running.
-				});
-			}
-		}, [audioAnnotationClips, currentTime, isPlaying]);
 
 		useEffect(() => {
 			if (!pixiReady || !videoReady) return;
@@ -1286,14 +1337,22 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				isPlayingRef,
 				allowPlaybackRef,
 				currentTimeRef,
+				outputTimeRef,
+				holdSeekInProgressRef,
 				timeUpdateAnimationRef,
 				onPlayStateChange: (playing) => onPlayStateChangeRef.current(playing),
-				onTimeUpdate: (time) => onTimeUpdateRef.current(time),
+				onTimeUpdate: (time, outputTimeMs) => {
+					onTimeUpdateRef.current(time, outputTimeMs);
+					setOutputPlaybackTimeMsRef.current(outputTimeMs ?? Math.round(time * 1000));
+				},
 				trimRegionsRef,
 				speedRegionsRef,
+				holdRegionsRef,
+				sourceDurationMsRef,
 				isScrubbingRef,
 				scrubEndTimerRef,
 				onScrubChange: (scrubbing) => setIsScrubbing(scrubbing),
+				onAfterTimeUpdate: () => syncPreviewAudioRef.current(),
 			});
 
 			video.addEventListener("play", handlePlay);
@@ -2172,8 +2231,18 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 												: item.region.id === selectedAnnotationId
 										}
 										previewSourceCanvas={previewSnapshotCanvas}
-										previewFrameVersion={Math.round(currentTime * 1000)}
-										currentTimeMs={Math.round(currentTime * 1000)}
+										previewFrameVersion={
+											holdRegions.length > 0 ? outputPlaybackTimeMs : Math.round(currentTime * 1000)
+										}
+										currentTimeMs={
+											holdRegions.length > 0
+												? resolveAnnotationAnimationTimeMs(
+														outputPlaybackTimeMs,
+														item.region.startMs,
+														holdRegions,
+													)
+												: Math.round(currentTime * 1000)
+										}
 									/>
 								));
 							})()}

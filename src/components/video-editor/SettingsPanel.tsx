@@ -314,10 +314,14 @@ interface SettingsPanelProps {
 	onAnnotationDelete?: (id: string) => void;
 	videoDurationMs?: number;
 	onAnnotationDurationChange?: (id: string, durationMs: number) => void;
+	onAnnotationFreezeChange?: (id: string, enabled: boolean) => void;
+	onAnnotationHoldDurationChange?: (id: string, holdDurationMs: number) => void;
 	selectedAudioAnnotationId?: string | null;
 	audioAnnotationClips?: AudioAnnotationClip[];
 	onAudioAnnotationVolumeChange?: (id: string, volume: number) => void;
 	onAudioAnnotationDurationChange?: (id: string, durationMs: number) => void;
+	onAudioAnnotationFreezeChange?: (id: string, enabled: boolean) => void;
+	onAudioAnnotationHoldDurationChange?: (id: string, holdDurationMs: number) => void;
 	onAudioAnnotationReplace?: (
 		id: string,
 		audioUrl: string,
@@ -464,10 +468,14 @@ export function SettingsPanel({
 	onAnnotationDelete,
 	videoDurationMs,
 	onAnnotationDurationChange,
+	onAnnotationFreezeChange,
+	onAnnotationHoldDurationChange,
 	selectedAudioAnnotationId,
 	audioAnnotationClips = [],
 	onAudioAnnotationVolumeChange,
 	onAudioAnnotationDurationChange,
+	onAudioAnnotationFreezeChange,
+	onAudioAnnotationHoldDurationChange,
 	onAudioAnnotationReplace,
 	onAudioAnnotationDelete,
 	selectedBlurId,
@@ -821,6 +829,17 @@ export function SettingsPanel({
 										onAudioAnnotationDurationChange(selectedAudioAnnotation.id, durationMs)
 								: undefined
 						}
+						onFreezeDuringAnnotationChange={
+							onAudioAnnotationFreezeChange
+								? (enabled) => onAudioAnnotationFreezeChange(selectedAudioAnnotation.id, enabled)
+								: undefined
+						}
+						onHoldDurationChange={
+							onAudioAnnotationHoldDurationChange
+								? (holdDurationMs) =>
+										onAudioAnnotationHoldDurationChange(selectedAudioAnnotation.id, holdDurationMs)
+								: undefined
+						}
 						onReplaceAudio={
 							onAudioAnnotationReplace
 								? (audioUrl, fileName, sourceDurationMs, sourceFilePath) =>
@@ -863,6 +882,17 @@ export function SettingsPanel({
 						onDurationChange={
 							onAnnotationDurationChange
 								? (durationMs) => onAnnotationDurationChange(selectedAnnotation.id, durationMs)
+								: undefined
+						}
+						onFreezeDuringAnnotationChange={
+							onAnnotationFreezeChange
+								? (enabled) => onAnnotationFreezeChange(selectedAnnotation.id, enabled)
+								: undefined
+						}
+						onHoldDurationChange={
+							onAnnotationHoldDurationChange
+								? (holdDurationMs) =>
+										onAnnotationHoldDurationChange(selectedAnnotation.id, holdDurationMs)
 								: undefined
 						}
 						onFigureDataChange={

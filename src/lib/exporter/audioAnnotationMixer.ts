@@ -1,4 +1,6 @@
-import type { AudioAnnotationClip } from "@/components/video-editor/types";
+import type { AudioAnnotationClip, HoldRegion } from "@/components/video-editor/types";
+import { sourceToOutputMs } from "@/lib/timelineMapping";
+import { getOutputAudioDurationSec, renderBaseAudioOnOutputTimeline } from "./holdAudioExport";
 
 const EXPORT_SAMPLE_RATE = 48_000;
 const AUDIO_BITRATE = 320_000;
@@ -92,20 +94,31 @@ export async function mixAudioAnnotationClips(
 	baseBlob: Blob,
 	clips: AudioAnnotationClip[],
 	totalDurationSec: number,
+	holdRegions: HoldRegion[] = [],
+	sourceDurationSec?: number,
 ): Promise<Blob> {
-	if (clips.length === 0) {
+	if (clips.length === 0 && holdRegions.length === 0) {
 		return baseBlob;
 	}
 
-	const frameCount = Math.max(1, Math.ceil(EXPORT_SAMPLE_RATE * totalDurationSec));
+	const outputDurationSec =
+		holdRegions.length > 0 && sourceDurationSec !== undefined
+			? getOutputAudioDurationSec(sourceDurationSec, holdRegions)
+			: totalDurationSec;
+
+	const frameCount = Math.max(1, Math.ceil(EXPORT_SAMPLE_RATE * outputDurationSec));
 	const offline = new OfflineAudioContext(2, frameCount, EXPORT_SAMPLE_RATE);
 
 	const baseBuffer = await decodeAudioBlob(baseBlob);
 	if (baseBuffer) {
+		const timelineBuffer =
+			holdRegions.length > 0
+				? renderBaseAudioOnOutputTimeline(baseBuffer, holdRegions, outputDurationSec)
+				: baseBuffer;
 		const baseSource = offline.createBufferSource();
-		baseSource.buffer = baseBuffer;
+		baseSource.buffer = timelineBuffer;
 		baseSource.connect(offline.destination);
-		baseSource.start(0, 0, Math.min(baseBuffer.duration, totalDurationSec));
+		baseSource.start(0, 0, Math.min(timelineBuffer.duration, outputDurationSec));
 	}
 
 	for (const clip of clips) {
@@ -114,13 +127,16 @@ export async function mixAudioAnnotationClips(
 			continue;
 		}
 
-		const startSec = clip.anchorMs / 1000;
+		const startSec =
+			holdRegions.length > 0
+				? sourceToOutputMs(clip.anchorMs, holdRegions) / 1000
+				: clip.anchorMs / 1000;
 		const playDurationSec = Math.min(
 			clip.durationMs / 1000,
 			clipBuffer.duration,
-			Math.max(0, totalDurationSec - startSec),
+			Math.max(0, outputDurationSec - startSec),
 		);
-		if (playDurationSec <= 0 || startSec >= totalDurationSec) {
+		if (playDurationSec <= 0 || startSec >= outputDurationSec) {
 			continue;
 		}
 

@@ -229,6 +229,10 @@ export interface AudioAnnotationClip {
 	fileName?: string;
 	sourceDurationMs?: number;
 	volume?: number;
+	/** When true, the video freezes at anchorMs for holdDurationMs during preview/export. */
+	freezeDuringAnnotation?: boolean;
+	/** Output hold duration; defaults to clip duration when freeze is enabled. */
+	holdDurationMs?: number;
 }
 
 export const DEFAULT_AUDIO_ANNOTATION_VOLUME = 1;
@@ -307,6 +311,16 @@ export interface AnnotationTextStyle {
 	textAnimation?: AnnotationTextAnimation;
 }
 
+export interface HoldRegion {
+	id: string;
+	sourceMs: number;
+	holdDurationMs: number;
+	linkedAnnotationId?: string;
+}
+
+export const MIN_HOLD_DURATION_MS = 500;
+export const MAX_HOLD_DURATION_MS = 30_000;
+
 export interface AnnotationRegion {
 	id: string;
 	startMs: number;
@@ -325,6 +339,10 @@ export interface AnnotationRegion {
 	annotationSource?: "auto-caption";
 	figureData?: FigureData;
 	blurData?: BlurData;
+	/** When true, the video freezes at startMs for holdDurationMs during preview/export. */
+	freezeDuringAnnotation?: boolean;
+	/** Output hold length; defaults to endMs - startMs. Must be >= annotation span when frozen. */
+	holdDurationMs?: number;
 }
 
 export const DEFAULT_ANNOTATION_POSITION: AnnotationPosition = {

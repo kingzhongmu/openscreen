@@ -126,6 +126,9 @@
 		"active": "活动",
 		"anchorTime": "锚点",
 		"duration": "持续时长",
+		"freezeDuringAnnotation": "批注期间定帧画面",
+		"freezeDuringAnnotationHint": "在锚点处暂停视频，批注显示期间画面保持静止。",
+		"holdDuration": "定帧时长",
 		"typeText": "文本",
 		"typeImage": "图片",
 		"typeArrow": "箭头",
@@ -186,6 +189,7 @@
 		"replaceFile": "替换音频",
 		"volume": "音量",
 		"delete": "删除音频",
+		"freezeDuringAnnotationHint": "旁白播放期间在锚点处暂停视频画面。",
 		"invalidFileType": "无效的文件类型",
 		"failedToLoad": "无法加载音频文件"
 	},

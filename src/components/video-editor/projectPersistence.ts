@@ -3,6 +3,7 @@ import { normalizePersistedAudioUrl } from "@/lib/audioAnnotationPersistence";
 import { normalizeBlurColor, normalizeBlurType } from "@/lib/blurEffects";
 import { normalizeCursorThemeId } from "@/lib/cursor/cursorThemes";
 import type { ExportFormat, ExportQuality, GifFrameRate, GifSizePreset } from "@/lib/exporter";
+import { syncHoldRegionsFromEditor } from "@/lib/holdRegions";
 import type { ProjectMedia } from "@/lib/recordingSession";
 import { normalizeProjectMedia } from "@/lib/recordingSession";
 import { DEFAULT_WALLPAPER, WALLPAPER_PATHS } from "@/lib/wallpaper";
@@ -33,11 +34,14 @@ import {
 	DEFAULT_WEBCAM_REACTIVE_ZOOM,
 	DEFAULT_ZOOM_DEPTH,
 	DEFAULT_ZOOM_MOTION_BLUR,
+	type HoldRegion,
 	MAX_BLUR_BLOCK_SIZE,
 	MAX_BLUR_INTENSITY,
+	MAX_HOLD_DURATION_MS,
 	MAX_PLAYBACK_SPEED,
 	MIN_BLUR_BLOCK_SIZE,
 	MIN_BLUR_INTENSITY,
+	MIN_HOLD_DURATION_MS,
 	MIN_PLAYBACK_SPEED,
 	type SpeedRegion,
 	type TrimRegion,
@@ -65,7 +69,7 @@ function normalizeWallpaperValue(value: string): string {
 	return CANONICAL_WALLPAPERS.has(canonical) ? canonical : DEFAULT_WALLPAPER;
 }
 
-export const PROJECT_VERSION = 3;
+export const PROJECT_VERSION = 4;
 
 export interface ProjectEditorState {
 	wallpaper: string;
@@ -83,6 +87,7 @@ export interface ProjectEditorState {
 	speedRegions: SpeedRegion[];
 	annotationRegions: AnnotationRegion[];
 	audioAnnotationClips: AudioAnnotationClip[];
+	holdRegions: HoldRegion[];
 	aspectRatio: AspectRatio;
 	webcamLayoutPreset: WebcamLayoutPreset;
 	webcamMaskShape: WebcamMaskShape;
@@ -343,6 +348,15 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 							? Math.max(1, Math.round(clip.sourceDurationMs))
 							: undefined,
 						volume,
+						...(clip.freezeDuringAnnotation ? { freezeDuringAnnotation: true as const } : {}),
+						...(clip.freezeDuringAnnotation && isFiniteNumber(clip.holdDurationMs)
+							? {
+									holdDurationMs: Math.max(
+										MIN_HOLD_DURATION_MS,
+										Math.min(MAX_HOLD_DURATION_MS, Math.round(clip.holdDurationMs)),
+									),
+								}
+							: {}),
 					};
 				})
 		: [];
@@ -459,9 +473,45 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 											: DEFAULT_BLUR_FREEHAND_POINTS,
 									}
 								: undefined,
+						...(region.freezeDuringAnnotation ? { freezeDuringAnnotation: true as const } : {}),
+						...(region.freezeDuringAnnotation && isFiniteNumber(region.holdDurationMs)
+							? {
+									holdDurationMs: Math.max(
+										MIN_HOLD_DURATION_MS,
+										Math.min(MAX_HOLD_DURATION_MS, Math.round(region.holdDurationMs)),
+									),
+								}
+							: {}),
 					};
 				})
 		: [];
+
+	const normalizedHoldRegions: HoldRegion[] = syncHoldRegionsFromEditor(
+		normalizedAnnotationRegions,
+		normalizedAudioAnnotationClips,
+		Array.isArray(editor.holdRegions)
+			? editor.holdRegions
+					.filter((hold): hold is HoldRegion => Boolean(hold && typeof hold.id === "string"))
+					.map((hold) => {
+						const sourceMs = isFiniteNumber(hold.sourceMs)
+							? Math.max(0, Math.round(hold.sourceMs))
+							: 0;
+						const holdDurationMs = isFiniteNumber(hold.holdDurationMs)
+							? Math.max(
+									MIN_HOLD_DURATION_MS,
+									Math.min(MAX_HOLD_DURATION_MS, Math.round(hold.holdDurationMs)),
+								)
+							: MIN_HOLD_DURATION_MS;
+						return {
+							id: hold.id,
+							sourceMs,
+							holdDurationMs,
+							linkedAnnotationId:
+								typeof hold.linkedAnnotationId === "string" ? hold.linkedAnnotationId : undefined,
+						};
+					})
+			: [],
+	);
 
 	const rawCropX = isFiniteNumber(editor.cropRegion?.x)
 		? editor.cropRegion.x
@@ -528,6 +578,7 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 		speedRegions: normalizedSpeedRegions,
 		annotationRegions: normalizedAnnotationRegions,
 		audioAnnotationClips: normalizedAudioAnnotationClips,
+		holdRegions: normalizedHoldRegions,
 		aspectRatio: normalizedAspectRatio,
 		webcamLayoutPreset: normalizedWebcamLayoutPreset,
 		webcamMaskShape:

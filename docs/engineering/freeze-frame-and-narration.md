@@ -1,6 +1,6 @@
 # 视频指定点批注（Video Position Annotation）
 
-> 状态：图形/文字批注与音频解说 V1 已上线；编辑器内录音、TTS 与「定帧批注」模式待实现  
+> 状态：图形/文字批注与音频解说 V1 已上线；**定帧批注（阶段 5）已实现**；编辑器内录音、TTS 待实现；时间轴成片标尺可视化留待阶段 6  
 > 本文档取代原先以停帧（Hold）为核心的方案叙述，停帧相关内容见 [附录：可选定帧模式](#附录可选定帧模式freeze--hold)
 
 ## 背景与目标
@@ -41,7 +41,7 @@
 视频       正常播放，不暂停
 成片时长   = 源视频时长（裁剪/变速后）
 
-模式 B — 定帧批注（可选，待实现）
+模式 B — 定帧批注（可选，阶段 5 已实现）
 源时间   0s ──── 5.0s ──── 5.0s ──── 8.0s ───►
               │ 定帧 3s + 叠加 │
 成片时间 0s ──── 5.0s ──── 8.0s ──── 11.0s ───►
@@ -225,6 +225,25 @@ interface AudioAnnotationClip {
 - **持久化**：保存项目时将音频复制到项目文件旁的 `audio-assets/` 目录（不在 `recordings/`）；加载时解析为 `file://` 路径
 - UI：`AudioAnnotationSettingsPanel.tsx`、时间轴 `row-audio-annotation`
 
+## 阶段 5 交互（已实现）
+
+### 用户流程
+
+1. 选中图形/文字批注 → 侧栏开启 **「批注期间定帧画面」**
+2. 可选调节 **定帧时长**（默认 ≥ 批注持续时长，500ms–30s）
+3. **时间轴 UI 仍为源时间**（不显示定帧插入段；成片标尺可视化留待阶段 6）
+4. 预览：定帧段内画面停在锚点帧，内部成片时钟推进；原声静音，音频批注按成片时间混播
+5. 导出 MP4：锚点帧重复、成片时长延长、定帧段原声静音
+
+### 实现要点
+
+- 批注字段：`freezeDuringAnnotation`、`holdDurationMs`（`types.ts`）
+- 内部数据：`HoldRegion[]`，由 `syncHoldRegionsFromAnnotations` 与批注联动
+- 映射：`src/lib/timelineMapping.ts`（`sourceToOutputMs` / `outputToSourceMs`）
+- 预览：`videoPlayback/holdPlayback.ts` + `videoEventHandlers.ts` 成片 rAF 时钟
+- 导出：`holdFrameExport.ts` 重复帧 + `holdAudioExport.ts` 定帧静音 + `audioAnnotationMixer` 成片定位
+- 持久化：项目版本 v4，`holdRegions` 与批注 freeze 字段一并保存
+
 ## 实现路线图
 
 
@@ -235,7 +254,7 @@ interface AudioAnnotationClip {
 | **2** | 音频批注 V1：导入 mp3/wav + 预览播放 + 导出混音              | ✅ 已上线 |
 | **3** | 音频批注 V2：编辑器内录音                                | 待做    |
 | **4** | 音频批注 V3：TTS                                   | 待做    |
-| **5** | 定帧批注模式：`freezeDuringAnnotation` + Hold + 时间映射 | 待做    |
+| **5** | 定帧批注模式：`freezeDuringAnnotation` + Hold + 时间映射 | ✅ 已上线（时间轴仍为源时间，阶段 6 再做成片标尺） |
 | **6** | 定帧模式下标注/字幕/Whisper 时间重映射                      | 待做    |
 | **7** | 体验：批注模板、批量编辑、复制到其他锚点                          | 待做    |
 
@@ -273,15 +292,17 @@ interface AudioAnnotationClip {
 | `src/lib/captioning/annotationsFromCaptions.ts`           | 自动字幕 → 批注                           |
 
 
-定帧模式额外涉及（待建）：
+定帧模式（阶段 5）：
 
-
-| 文件                                              | 职责       |
-| ----------------------------------------------- | -------- |
-| `src/lib/timelineMapping.ts`                    | 源/成片时间映射 |
-| `src/lib/exporter/streamingDecoder.ts`          | 导出重复帧    |
-| `src/components/video-editor/VideoPlayback.tsx` | 定帧预览 rAF |
-
+| 文件 | 职责 |
+| --- | --- |
+| `src/lib/timelineMapping.ts` | 源/成片时间映射 |
+| `src/lib/holdRegions.ts` | 批注 → Hold 同步 |
+| `src/lib/exporter/holdFrameExport.ts` | 导出重复帧 |
+| `src/lib/exporter/holdAudioExport.ts` | 定帧段原声静音 |
+| `src/components/video-editor/videoPlayback/holdPlayback.ts` | 预览成片时钟 |
+| `src/components/video-editor/videoPlayback/videoEventHandlers.ts` | 定帧预览 rAF |
+| `src/components/video-editor/AnnotationSettingsPanel.tsx` | 定帧开关与时长滑块 |
 
 ## 验证
 
@@ -329,7 +350,7 @@ interface HoldRegion {
 - **源 → 成片**：`outputMs = sourceMs + Σ holdDurationMs`（所有 `hold.sourceMs < sourceMs`）
 - **成片 → 源**：若落在某停帧的成片区间 `[holdOutStart, holdOutEnd)`，则 `sourceMs = hold.sourceMs`；否则减去已累计停帧时长
 
-实现：`src/lib/timelineMapping.ts`（待建）
+实现：`src/lib/timelineMapping.ts`
 
 ### 预览
 

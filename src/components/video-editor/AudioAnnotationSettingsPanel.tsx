@@ -3,6 +3,7 @@ import { useRef } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { useScopedT } from "@/contexts/I18nContext";
 import {
 	ACCEPTED_AUDIO_ANNOTATION_EXTENSIONS,
@@ -10,18 +11,22 @@ import {
 	isAcceptedAudioAnnotationFile,
 } from "@/lib/audioAnnotation";
 import { resolveImportedAudioReference } from "@/lib/audioAnnotationPersistence";
+import { getAudioClipHoldDurationMs } from "@/lib/holdRegions";
 import {
 	formatAnnotationClockMs,
 	MAX_POSITION_ANNOTATION_DURATION_MS,
 	MIN_POSITION_ANNOTATION_DURATION_MS,
 } from "./positionAnnotation";
 import type { AudioAnnotationClip } from "./types";
+import { MAX_HOLD_DURATION_MS, MIN_HOLD_DURATION_MS } from "./types";
 
 interface AudioAnnotationSettingsPanelProps {
 	clip: AudioAnnotationClip;
 	videoDurationMs?: number;
 	onVolumeChange: (volume: number) => void;
 	onDurationChange?: (durationMs: number) => void;
+	onFreezeDuringAnnotationChange?: (enabled: boolean) => void;
+	onHoldDurationChange?: (holdDurationMs: number) => void;
 	onReplaceAudio?: (
 		audioUrl: string,
 		fileName: string,
@@ -36,6 +41,8 @@ export function AudioAnnotationSettingsPanel({
 	videoDurationMs,
 	onVolumeChange,
 	onDurationChange,
+	onFreezeDuringAnnotationChange,
+	onHoldDurationChange,
 	onReplaceAudio,
 	onDelete,
 }: AudioAnnotationSettingsPanelProps) {
@@ -45,6 +52,7 @@ export function AudioAnnotationSettingsPanel({
 	const maxDurationMs = videoDurationMs
 		? Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, videoDurationMs - clip.anchorMs)
 		: MAX_POSITION_ANNOTATION_DURATION_MS;
+	const holdDurationMs = getAudioClipHoldDurationMs(clip);
 
 	const handleReplaceFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
 		const file = event.target.files?.[0];
@@ -109,6 +117,45 @@ export function AudioAnnotationSettingsPanel({
 					</div>
 				)}
 			</div>
+
+			{onFreezeDuringAnnotationChange && (
+				<div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 space-y-3">
+					<div className="flex items-center justify-between gap-3">
+						<div>
+							<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+								{t("annotation.freezeDuringAnnotation")}
+							</div>
+							<div className="mt-1 text-xs text-slate-400">
+								{t("audioAnnotation.freezeDuringAnnotationHint")}
+							</div>
+						</div>
+						<Switch
+							checked={Boolean(clip.freezeDuringAnnotation)}
+							onCheckedChange={onFreezeDuringAnnotationChange}
+						/>
+					</div>
+					{clip.freezeDuringAnnotation && onHoldDurationChange && (
+						<div>
+							<div className="mb-2 flex items-center justify-between gap-3">
+								<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+									{t("annotation.holdDuration")}
+								</div>
+								<div className="text-sm font-semibold tabular-nums text-[#a78bfa]">
+									{(holdDurationMs / 1000).toFixed(1)}s
+								</div>
+							</div>
+							<Slider
+								value={[holdDurationMs]}
+								min={Math.max(MIN_HOLD_DURATION_MS, clip.durationMs)}
+								max={MAX_HOLD_DURATION_MS}
+								step={100}
+								onValueChange={([value]) => onHoldDurationChange(value)}
+								className="py-1"
+							/>
+						</div>
+					)}
+				</div>
+			)}
 
 			<div className="mb-4 space-y-2">
 				<div className="text-xs font-medium text-slate-200">{t("audioAnnotation.fileName")}</div>

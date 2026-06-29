@@ -127,6 +127,9 @@
 		"active": "Active",
 		"anchorTime": "Anchor",
 		"duration": "Duration",
+		"freezeDuringAnnotation": "Freeze frame during annotation",
+		"freezeDuringAnnotationHint": "Pause the video at the anchor while the annotation is shown.",
+		"holdDuration": "Hold duration",
 		"typeText": "Text",
 		"typeImage": "Image",
 		"typeArrow": "Arrow",
@@ -185,6 +188,7 @@
 		"replaceFile": "Replace Audio",
 		"volume": "Volume",
 		"delete": "Delete Audio",
+		"freezeDuringAnnotationHint": "Pause the video at the anchor while this narration plays.",
 		"invalidFileType": "Invalid file type",
 		"failedToLoad": "Failed to load audio file"
 	},

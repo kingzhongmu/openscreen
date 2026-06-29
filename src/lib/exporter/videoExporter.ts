@@ -1,6 +1,7 @@
 import type {
 	AnnotationRegion,
 	CropRegion,
+	HoldRegion,
 	SpeedRegion,
 	TrimRegion,
 	WebcamLayoutPreset,
@@ -12,6 +13,7 @@ import type { CursorRecordingData } from "@/native/contracts";
 import { getPlatform } from "@/utils/platformUtils";
 import { AudioProcessor } from "./audioEncoder";
 import { FrameRenderer } from "./frameRenderer";
+import { emitExportFrameWithHoldDuplicates } from "./holdFrameExport";
 import { VideoMuxer } from "./muxer";
 import { StreamingVideoDecoder } from "./streamingDecoder";
 import { TimestampedVideoFrameQueue } from "./timestampedVideoFrameQueue";
@@ -50,6 +52,7 @@ export interface VideoExporterConfig extends ExportConfig {
 	cursorTheme?: string;
 	annotationRegions?: AnnotationRegion[];
 	audioAnnotationClips?: import("@/components/video-editor/types").AudioAnnotationClip[];
+	holdRegions?: HoldRegion[];
 	previewWidth?: number;
 	previewHeight?: number;
 	cursorTelemetry?: import("@/components/video-editor/types").CursorTelemetryPoint[];
@@ -290,10 +293,13 @@ export class VideoExporter {
 			this.muxer = muxer;
 			await muxer.initialize();
 
+			const holdRegions = this.config.holdRegions ?? [];
+
 			const { totalFrames } = streamingDecoder.getExportMetrics(
 				this.config.frameRate,
 				this.config.trimRegions,
 				this.config.speedRegions,
+				holdRegions,
 			);
 
 			const frameDuration = 1_000_000 / this.config.frameRate;
@@ -339,6 +345,81 @@ export class VideoExporter {
 						})()
 					: null;
 
+			const encodeRenderedSourceFrame = async (
+				exportFrameIndex: number,
+				videoFrame: VideoFrame,
+				sourceTimestampMs: number,
+				webcamFrame: VideoFrame | null,
+			) => {
+				if (this.cancelled) {
+					return;
+				}
+
+				if (this.fatalEncoderError) {
+					throw this.fatalEncoderError;
+				}
+
+				const timestamp = exportFrameIndex * frameDuration;
+				const sourceTimestampUs = sourceTimestampMs * 1000;
+				await renderer.renderFrame(videoFrame, sourceTimestampUs, webcamFrame);
+
+				const canvas = renderer.getCanvas();
+
+				let exportFrame: VideoFrame;
+
+				// On some Linux systems the GPU shared-image path (EGL/Ozone) fails
+				// silently, producing empty frames, so we force a CPU readback instead.
+				if (platform === "linux") {
+					const canvasCtx = canvas.getContext("2d")!;
+					const imageData = canvasCtx.getImageData(0, 0, canvas.width, canvas.height);
+					exportFrame = new VideoFrame(imageData.data.buffer, {
+						format: "RGBA",
+						codedWidth: canvas.width,
+						codedHeight: canvas.height,
+						timestamp,
+						duration: frameDuration,
+						colorSpace: {
+							primaries: "bt709",
+							transfer: "iec61966-2-1",
+							matrix: "rgb",
+							fullRange: true,
+						},
+					});
+				} else {
+					exportFrame = new VideoFrame(canvas, { timestamp, duration: frameDuration });
+				}
+
+				while (this.encoder && this.encoder.encodeQueueSize >= maxEncodeQueue && !this.cancelled) {
+					if (Date.now() - this.lastEncoderOutputAt > ENCODER_STALL_TIMEOUT_MS) {
+						exportFrame.close();
+						throw new Error(
+							encoderPreference === "prefer-hardware"
+								? "The hardware video encoder stopped responding. Retrying with a safer encoder."
+								: "The video encoder stopped responding during export.",
+						);
+					}
+					await new Promise((resolve) => setTimeout(resolve, 5));
+				}
+
+				if (this.encoder && this.encoder.state === "configured") {
+					this.encodeQueue++;
+					this.encoder.encode(exportFrame, { keyFrame: exportFrameIndex % 150 === 0 });
+				} else {
+					console.warn(
+						`[Frame ${exportFrameIndex}] Encoder not ready! State: ${this.encoder?.state}`,
+					);
+				}
+
+				exportFrame.close();
+
+				this.reportProgress({
+					currentFrame: exportFrameIndex + 1,
+					totalFrames,
+					percentage: ((exportFrameIndex + 1) / totalFrames) * 100,
+					estimatedTimeRemaining: 0,
+				});
+			};
+
 			await streamingDecoder.decodeAll(
 				this.config.frameRate,
 				this.config.trimRegions,
@@ -354,7 +435,6 @@ export class VideoExporter {
 							throw this.fatalEncoderError;
 						}
 
-						const timestamp = frameIndex * frameDuration;
 						webcamFrame = webcamFrameQueue
 							? await webcamFrameQueue.frameAt(sourceTimestampMs)
 							: null;
@@ -362,68 +442,28 @@ export class VideoExporter {
 							return;
 						}
 
-						const sourceTimestampUs = sourceTimestampMs * 1000;
-						await renderer.renderFrame(videoFrame, sourceTimestampUs, webcamFrame);
-
-						const canvas = renderer.getCanvas();
-
-						let exportFrame: VideoFrame;
-
-						// On some Linux systems the GPU shared-image path (EGL/Ozone) fails
-						// silently, producing empty frames, so we force a CPU readback instead.
-						if (platform === "linux") {
-							const canvasCtx = canvas.getContext("2d")!;
-							const imageData = canvasCtx.getImageData(0, 0, canvas.width, canvas.height);
-							exportFrame = new VideoFrame(imageData.data.buffer, {
-								format: "RGBA",
-								codedWidth: canvas.width,
-								codedHeight: canvas.height,
-								timestamp,
-								duration: frameDuration,
-								colorSpace: {
-									primaries: "bt709",
-									transfer: "iec61966-2-1",
-									matrix: "rgb",
-									fullRange: true,
-								},
-							});
-						} else {
-							exportFrame = new VideoFrame(canvas, { timestamp, duration: frameDuration });
-						}
-
-						while (
-							this.encoder &&
-							this.encoder.encodeQueueSize >= maxEncodeQueue &&
-							!this.cancelled
-						) {
-							if (Date.now() - this.lastEncoderOutputAt > ENCODER_STALL_TIMEOUT_MS) {
-								exportFrame.close();
-								throw new Error(
-									encoderPreference === "prefer-hardware"
-										? "The hardware video encoder stopped responding. Retrying with a safer encoder."
-										: "The video encoder stopped responding during export.",
-								);
-							}
-							await new Promise((resolve) => setTimeout(resolve, 5));
-						}
-
-						if (this.encoder && this.encoder.state === "configured") {
-							this.encodeQueue++;
-							this.encoder.encode(exportFrame, { keyFrame: frameIndex % 150 === 0 });
-						} else {
-							console.warn(
-								`[Frame ${frameIndex}] Encoder not ready! State: ${this.encoder?.state}`,
+						if (holdRegions.length === 0) {
+							await encodeRenderedSourceFrame(
+								frameIndex,
+								videoFrame,
+								sourceTimestampMs,
+								webcamFrame,
 							);
+							frameIndex++;
+							return;
 						}
 
-						exportFrame.close();
-						frameIndex++;
-
-						this.reportProgress({
-							currentFrame: frameIndex,
-							totalFrames,
-							percentage: (frameIndex / totalFrames) * 100,
-							estimatedTimeRemaining: 0,
+						frameIndex = await emitExportFrameWithHoldDuplicates({
+							videoFrame,
+							sourceTimestampMs,
+							exportFrameIndex: frameIndex,
+							frameDurationUs: frameDuration,
+							targetFrameRate: this.config.frameRate,
+							holdRegions,
+							onFrame: async (frame, exportTimestampUs, srcMs) => {
+								const exportFrameIndex = Math.round(exportTimestampUs / frameDuration);
+								await encodeRenderedSourceFrame(exportFrameIndex, frame, srcMs, webcamFrame);
+							},
 						});
 					} finally {
 						videoFrame.close();
@@ -482,6 +522,7 @@ export class VideoExporter {
 					videoInfo.duration,
 					audioExportCodec,
 					this.config.audioAnnotationClips,
+					holdRegions,
 				);
 			}
 

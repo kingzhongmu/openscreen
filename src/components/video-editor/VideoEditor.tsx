@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { useI18n, useScopedT } from "@/contexts/I18nContext";
 import { useShortcuts } from "@/contexts/ShortcutsContext";
-import { INITIAL_EDITOR_STATE, useEditorHistory } from "@/hooks/useEditorHistory";
+import { type EditorState, INITIAL_EDITOR_STATE, useEditorHistory } from "@/hooks/useEditorHistory";
 import { type Locale } from "@/i18n/config";
 import { getAvailableLocales, getLocaleName } from "@/i18n/loader";
 import {
@@ -66,6 +66,7 @@ import {
 	VideoExporter,
 } from "@/lib/exporter";
 import { computeFrameStepTime } from "@/lib/frameStep";
+import { syncHoldRegionsFromEditor } from "@/lib/holdRegions";
 import type { CursorCaptureMode, ProjectMedia } from "@/lib/recordingSession";
 import { matchesShortcut } from "@/lib/shortcuts";
 import {
@@ -132,6 +133,7 @@ import {
 } from "./types";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import VideoPlayback, { VideoPlaybackRef } from "./VideoPlayback";
+import { holdPlaybackLog } from "./videoPlayback/holdPlaybackDebug";
 
 /** Single Sonner slot so auto-caption phases update in place instead of stacking. */
 const AUTO_CAPTION_PROGRESS_TOAST_ID = "auto-caption-progress";
@@ -194,6 +196,24 @@ function buildSaveDiagnosticMessage(formatLabel: "GIF" | "Video", reason?: strin
 
 const CAPTION_WORD_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
+function withSyncedHoldRegions(
+	prev: EditorState,
+	updates: Partial<Pick<EditorState, "annotationRegions" | "audioAnnotationClips">>,
+): Partial<EditorState> {
+	const annotationRegions = updates.annotationRegions ?? prev.annotationRegions;
+	const audioAnnotationClips = updates.audioAnnotationClips ?? prev.audioAnnotationClips;
+	return {
+		...updates,
+		annotationRegions,
+		audioAnnotationClips,
+		holdRegions: syncHoldRegionsFromEditor(
+			annotationRegions,
+			audioAnnotationClips,
+			prev.holdRegions,
+		),
+	};
+}
+
 export default function VideoEditor() {
 	const {
 		state: editorState,
@@ -213,6 +233,7 @@ export default function VideoEditor() {
 		speedRegions,
 		annotationRegions,
 		audioAnnotationClips,
+		holdRegions,
 		cropRegion,
 		wallpaper,
 		shadowIntensity,
@@ -440,6 +461,7 @@ export default function VideoEditor() {
 					normalizedEditor.audioAnnotationClips,
 					path,
 				),
+				holdRegions: normalizedEditor.holdRegions,
 				aspectRatio: normalizedEditor.aspectRatio,
 				webcamLayoutPreset: normalizedEditor.webcamLayoutPreset,
 				webcamMaskShape: normalizedEditor.webcamMaskShape,
@@ -523,6 +545,7 @@ export default function VideoEditor() {
 			speedRegions,
 			annotationRegions,
 			audioAnnotationClips,
+			holdRegions,
 			aspectRatio,
 			webcamLayoutPreset,
 			webcamMaskShape,
@@ -555,6 +578,7 @@ export default function VideoEditor() {
 		speedRegions,
 		annotationRegions,
 		audioAnnotationClips,
+		holdRegions,
 		aspectRatio,
 		webcamLayoutPreset,
 		webcamMaskShape,
@@ -695,6 +719,7 @@ export default function VideoEditor() {
 				speedRegions,
 				annotationRegions,
 				audioAnnotationClips,
+				holdRegions,
 				aspectRatio,
 				webcamLayoutPreset,
 				webcamMaskShape,
@@ -773,6 +798,7 @@ export default function VideoEditor() {
 			speedRegions,
 			annotationRegions,
 			audioAnnotationClips,
+			holdRegions,
 			aspectRatio,
 			webcamLayoutPreset,
 			webcamMaskShape,
@@ -1029,6 +1055,13 @@ export default function VideoEditor() {
 	function handleSeek(time: number) {
 		const video = videoPlaybackRef.current?.video;
 		if (!video) return;
+		holdPlaybackLog("ui-seek", {
+			targetSec: time,
+			targetMs: Math.round(time * 1000),
+			videoBeforeMs: Math.round(video.currentTime * 1000),
+			reactCurrentTimeMs: Math.round(currentTime * 1000),
+			holdRegions,
+		});
 		video.currentTime = time;
 	}
 
@@ -1451,9 +1484,11 @@ export default function VideoEditor() {
 			const zIndex = nextAnnotationZIndexRef.current++;
 			const newRegion = buildPositionAnnotationRegion(type, span, id, zIndex);
 
-			pushState((prev) => ({
-				annotationRegions: [...prev.annotationRegions, newRegion],
-			}));
+			pushState((prev) =>
+				withSyncedHoldRegions(prev, {
+					annotationRegions: [...prev.annotationRegions, newRegion],
+				}),
+			);
 
 			if (type === "blur") {
 				selectTimelineItem({ kind: "blur", id });
@@ -1490,9 +1525,9 @@ export default function VideoEditor() {
 							}
 						: region,
 				);
-				return {
+				return withSyncedHoldRegions(prev, {
 					annotationRegions: editedAutoCaption ? reconcileAutoCaptionTimelineGaps(next) : next,
-				};
+				});
 			});
 		},
 		[pushState],
@@ -1517,9 +1552,40 @@ export default function VideoEditor() {
 							}
 						: region,
 				);
-				return {
+				return withSyncedHoldRegions(prev, {
 					annotationRegions: editedAutoCaption ? reconcileAutoCaptionTimelineGaps(next) : next,
-				};
+				});
+			});
+		},
+		[pushState],
+	);
+
+	const handleAnnotationFreezeChange = useCallback(
+		(id: string, enabled: boolean) => {
+			pushState((prev) => {
+				const next = prev.annotationRegions.map((region) => {
+					if (region.id !== id) {
+						return region;
+					}
+					if (enabled) {
+						return { ...region, freezeDuringAnnotation: true as const };
+					}
+					const { freezeDuringAnnotation: _freeze, holdDurationMs: _hold, ...rest } = region;
+					return rest;
+				});
+				return withSyncedHoldRegions(prev, { annotationRegions: next });
+			});
+		},
+		[pushState],
+	);
+
+	const handleAnnotationHoldDurationChange = useCallback(
+		(id: string, holdDurationMs: number) => {
+			pushState((prev) => {
+				const next = prev.annotationRegions.map((region) =>
+					region.id === id ? { ...region, holdDurationMs } : region,
+				);
+				return withSyncedHoldRegions(prev, { annotationRegions: next });
 			});
 		},
 		[pushState],
@@ -1582,17 +1648,19 @@ export default function VideoEditor() {
 	const handleAudioAnnotationSpanChange = useCallback(
 		(id: string, span: Span) => {
 			const durationMs = Math.max(1, Math.round(span.end - span.start));
-			pushState((prev) => ({
-				audioAnnotationClips: prev.audioAnnotationClips.map((clip) =>
-					clip.id === id
-						? {
-								...clip,
-								anchorMs: Math.round(span.start),
-								durationMs,
-							}
-						: clip,
-				),
-			}));
+			pushState((prev) =>
+				withSyncedHoldRegions(prev, {
+					audioAnnotationClips: prev.audioAnnotationClips.map((clip) =>
+						clip.id === id
+							? {
+									...clip,
+									anchorMs: Math.round(span.start),
+									durationMs,
+								}
+							: clip,
+					),
+				}),
+			);
 		},
 		[pushState],
 	);
@@ -1600,18 +1668,53 @@ export default function VideoEditor() {
 	const handleAudioAnnotationDurationChange = useCallback(
 		(id: string, durationMs: number) => {
 			const totalMs = Math.round(durationRef.current * 1000);
-			pushState((prev) => ({
-				audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
-					if (clip.id !== id) {
-						return clip;
-					}
-					const maxDuration = Math.max(500, totalMs - clip.anchorMs);
-					return {
-						...clip,
-						durationMs: Math.max(500, Math.min(durationMs, maxDuration, 30_000)),
-					};
+			pushState((prev) =>
+				withSyncedHoldRegions(prev, {
+					audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
+						if (clip.id !== id) {
+							return clip;
+						}
+						const maxDuration = Math.max(500, totalMs - clip.anchorMs);
+						return {
+							...clip,
+							durationMs: Math.max(500, Math.min(durationMs, maxDuration, 30_000)),
+						};
+					}),
 				}),
-			}));
+			);
+		},
+		[pushState],
+	);
+
+	const handleAudioAnnotationFreezeChange = useCallback(
+		(id: string, enabled: boolean) => {
+			pushState((prev) =>
+				withSyncedHoldRegions(prev, {
+					audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
+						if (clip.id !== id) {
+							return clip;
+						}
+						if (enabled) {
+							return { ...clip, freezeDuringAnnotation: true as const };
+						}
+						const { freezeDuringAnnotation: _freeze, holdDurationMs: _hold, ...rest } = clip;
+						return rest;
+					}),
+				}),
+			);
+		},
+		[pushState],
+	);
+
+	const handleAudioAnnotationHoldDurationChange = useCallback(
+		(id: string, holdDurationMs: number) => {
+			pushState((prev) =>
+				withSyncedHoldRegions(prev, {
+					audioAnnotationClips: prev.audioAnnotationClips.map((clip) =>
+						clip.id === id ? { ...clip, holdDurationMs } : clip,
+					),
+				}),
+			);
 		},
 		[pushState],
 	);
@@ -1658,9 +1761,11 @@ export default function VideoEditor() {
 
 	const handleAudioAnnotationDelete = useCallback(
 		(id: string) => {
-			pushState((prev) => ({
-				audioAnnotationClips: prev.audioAnnotationClips.filter((clip) => clip.id !== id),
-			}));
+			pushState((prev) =>
+				withSyncedHoldRegions(prev, {
+					audioAnnotationClips: prev.audioAnnotationClips.filter((clip) => clip.id !== id),
+				}),
+			);
 			if (selectedAudioAnnotationId === id) {
 				setSelectedAudioAnnotationId(null);
 			}
@@ -1699,7 +1804,9 @@ export default function VideoEditor() {
 					figureData: source.figureData ? { ...source.figureData } : undefined,
 				};
 
-				return { annotationRegions: [...prev.annotationRegions, duplicate] };
+				return withSyncedHoldRegions(prev, {
+					annotationRegions: [...prev.annotationRegions, duplicate],
+				});
 			});
 			selectTimelineItem({ kind: "annotation", id: duplicateId });
 		},
@@ -1708,9 +1815,11 @@ export default function VideoEditor() {
 
 	const handleAnnotationDelete = useCallback(
 		(id: string) => {
-			pushState((prev) => ({
-				annotationRegions: prev.annotationRegions.filter((r) => r.id !== id),
-			}));
+			pushState((prev) =>
+				withSyncedHoldRegions(prev, {
+					annotationRegions: prev.annotationRegions.filter((r) => r.id !== id),
+				}),
+			);
 			if (selectedAnnotationId === id) {
 				setSelectedAnnotationId(null);
 			}
@@ -2262,6 +2371,7 @@ export default function VideoEditor() {
 						cursorTheme,
 						annotationRegions,
 						audioAnnotationClips,
+						holdRegions,
 						webcamLayoutPreset,
 						webcamMaskShape,
 						webcamMirrored,
@@ -2364,6 +2474,7 @@ export default function VideoEditor() {
 			cursorRecordingData,
 			annotationRegions,
 			audioAnnotationClips,
+			holdRegions,
 			isPlaying,
 			aspectRatio,
 			webcamLayoutPreset,
@@ -2570,7 +2681,11 @@ export default function VideoEditor() {
 					return;
 				}
 
-				pushState((prev) => ({ annotationRegions: [...prev.annotationRegions, ...regions] }));
+				pushState((prev) =>
+					withSyncedHoldRegions(prev, {
+						annotationRegions: [...prev.annotationRegions, ...regions],
+					}),
+				);
 				nextAnnotationIdRef.current = nextNumericId;
 				nextAnnotationZIndexRef.current = nextZIndex;
 
@@ -2882,6 +2997,7 @@ export default function VideoEditor() {
 													cursorRecordingData={cursorRecordingData}
 													trimRegions={trimRegions}
 													speedRegions={speedRegions}
+													holdRegions={holdRegions}
 													annotationRegions={annotationOnlyRegions}
 													audioAnnotationClips={audioAnnotationClips}
 													selectedAnnotationId={selectedAnnotationId}
@@ -3078,10 +3194,14 @@ export default function VideoEditor() {
 										onAnnotationDelete={handleAnnotationDelete}
 										videoDurationMs={Math.round(duration * 1000)}
 										onAnnotationDurationChange={handleAnnotationDurationChange}
+										onAnnotationFreezeChange={handleAnnotationFreezeChange}
+										onAnnotationHoldDurationChange={handleAnnotationHoldDurationChange}
 										selectedAudioAnnotationId={selectedAudioAnnotationId}
 										audioAnnotationClips={audioAnnotationClips}
 										onAudioAnnotationVolumeChange={handleAudioAnnotationVolumeChange}
 										onAudioAnnotationDurationChange={handleAudioAnnotationDurationChange}
+										onAudioAnnotationFreezeChange={handleAudioAnnotationFreezeChange}
+										onAudioAnnotationHoldDurationChange={handleAudioAnnotationHoldDurationChange}
 										onAudioAnnotationReplace={handleAudioAnnotationReplace}
 										onAudioAnnotationDelete={handleAudioAnnotationDelete}
 										selectedBlurId={selectedBlurId}
