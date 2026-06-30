@@ -1,6 +1,6 @@
 # 视频指定点批注（Video Position Annotation）
 
-> 状态：图形/文字批注与音频解说 V1 已上线；**定帧批注（阶段 5–7）已实现**；**源视频/预览双模式（阶段 8）已实现**；**批注重叠展开多轨（阶段 9）已实现**；定帧内批注（阶段 10）已确认、待实现；编辑器内录音、TTS 待实现  
+> 状态：图形/文字批注与音频解说 V1 已上线；**定帧批注（阶段 5–7）已实现**；**源视频/预览双模式（阶段 8）已实现**；**批注重叠展开多轨（阶段 9）已实现**；**定帧集合**（阶段 10）已确认、待实现；编辑器内录音、TTS 待实现  
 > 本文档取代原先以停帧（Hold）为核心的方案叙述，停帧相关内容见 [附录：可选定帧模式](#附录可选定帧模式freeze--hold)
 
 ## 背景与目标
@@ -13,7 +13,7 @@
 2. 同一时刻叠加箭头/高亮图形，配合文字动画
 3. 导入或录制一段旁白，与画面该段同步播放
 4. （可选）批注期间**定住画面**讲解，类似教程停帧——见附录
-5. （可选，阶段 10）在**已定帧的长停顿内**分步出现文字/箭头/旁白——见 [阶段 10](#阶段-10定帧内批注已确认待实现)
+5. （可选，阶段 10）在**定帧集合**内串行分步出现文字/箭头/旁白——见 [阶段 10](#阶段-10定帧集合已确认待实现)
 
 这与「必须先停帧、再叠加、再延长成片时间轴」的路径不同：**默认行为是叠加式批注**，底层视频时间轴不变；只有用户显式选择「定帧批注」时才需要源/成片双时间映射。
 
@@ -55,10 +55,10 @@
 | -------- | ----- | ---- | ------------ |
 | **叠加批注** | 继续播放  | 不变   | 单一源时间；**批注轨** |
 | **定帧批注** | 锚点处停住 | 延长   | 源时间 ↔ 成片时间映射；**仅定帧轨** |
-| **定帧内批注**（阶段 10） | 锚点处停住 | 不额外延长 | 相对某条定帧的 `holdOffsetMs`；预览/导出按成片时间显隐 |
+| **定帧集合**（阶段 10） | 锚点处停住 | 延长（= 各段时长之和） | 源锚点 + 集合内 **串行** 多段；与普通定帧同等地位 |
 
 
-**产品默认**：模式 A。模式 B 作为批注属性 `freezeDuringAnnotation: true` 的扩展；定帧批注在 UI 上**只出现在定帧轨**（见阶段 7），预览画布仍渲染 overlay。模式 C（定帧内批注）依附于已存在的定帧，不在源时间轴上单独「推进画面」。
+**产品默认**：模式 A。模式 B 作为批注属性 `freezeDuringAnnotation: true` 的扩展；定帧批注在 UI 上**只出现在定帧轨**（见阶段 7），预览画布仍渲染 overlay。模式 C（**定帧集合**）在单一源锚点下组织 **串行、不重叠** 的多段讲解步骤；**单段集合等价于 today's 普通定帧**（`segments.length === 1`）。
 
 ## 与现有实现的关系
 
@@ -123,7 +123,7 @@ interface AudioAnnotationClip {
 3. 默认 `durationMs = 3000`，侧栏可调
 4. 可选勾选「批注期间定帧画面」→ 条目进入**定帧轨**（阶段 7），不再在批注轨显示
 
-**批注轨**：仅叠加式批注；播放头处重叠时可 **展开为多子轨**（阶段 9，已实现）。**定帧轨**：定帧批注（可重叠，同样可展开）；同一锚点允许多条定帧批注并存。**定帧内批注轨**（阶段 10）：挂在某条定帧内部、按相对时间编排的 overlay / 旁白，见阶段 10。
+**批注轨**：仅叠加式批注；播放头处重叠时可 **展开为多子轨**（阶段 9，已实现）。**定帧轨**：普通定帧批注与 **定帧集合**（阶段 10）均在此轨；同一源锚点建议仅一条集合或普通定帧。**定帧集合**展开后，集合内各段占 **串行子轨**，见 [阶段 10](#阶段-10定帧集合已确认待实现)。
 
 ### 时间轴滚轮（阶段 9 同期）
 
@@ -374,13 +374,13 @@ interface AudioAnnotationClip {
 
 阶段 9 不改变批注/定帧的 **时间语义**（仍为源 `startMs` / `anchorMs` 与 `freezeDuringAnnotation`），只改善 **时间轴编辑布局**：将 **播放头处** 的重叠簇 **展开** 为多条子轨，子轨内不重叠。
 
-### 与定帧内批注（阶段 10）的分工
+### 与定帧集合（阶段 10）的分工
 
-| 维度 | 阶段 9 展开多轨 | 阶段 10 定帧内批注 |
+| 维度 | 阶段 9 展开多轨 | 阶段 10 定帧集合 |
 | --- | --- | --- |
-| 解决问题 | 同一时段多条批注/定帧 **不好选、不好拖** | 长定帧 **内部** 第 N 秒再出现内容 |
-| 影响范围 | 时间轴 UI + 展开状态（localStorage） | 新时间坐标 + 预览/导出/映射 |
-| 成片时钟 | 不变 | 不变（不额外延长） |
+| 解决问题 | 同一时段多条批注/定帧 **不好选、不好拖** | 长定帧 **内部** 串行分步讲解 |
+| 影响范围 | 时间轴 UI + 展开状态（localStorage） | 新实体 `HoldCollection` + 集合内子轨 + 映射 |
+| 成片时钟 | 不变 | 集合 insert = 各段时长 **之和**（与普通定帧同等延长成片） |
 
 ### 核心交互
 
@@ -429,7 +429,7 @@ expandedClustersByTrack: Record<trackId, clusterId>
 | 时间轴滚轮：垂直 / Alt 平移 / Ctrl 缩放 | ✅ |
 | 条目级 `laneIndex` / 项目内持久化布局 | ❌ 未做 |
 | 音频批注轨独立展开 | ❌ 未做（定帧音频随定帧轨 Tab 循环） |
-| 父/子批注、`holdOffsetMs` | ❌ 阶段 10 |
+| 定帧集合 `segments[]`、集合内串行子轨 | ❌ 阶段 10 |
 
 ### 实现要点
 
@@ -451,218 +451,276 @@ npx vitest run src/lib/overlapClusters.test.ts
 
 ### 非目标（阶段 9）
 
-- 不引入 `holdOffsetMs` / `linkedHoldId`（阶段 10）
+- 不引入 `HoldCollection` / 集合内 `segments`（阶段 10）
 - 不改变 `timelineMapping`、定帧播放、导出时长
 - 不做批注模板、批量复制（阶段 11）
 
-## 阶段 10：定帧内批注（已确认，待实现）
+## 阶段 10：定帧集合（已确认，待实现）
+
+> **方案演进**：早期草案为「定帧内批注」(`linkedHoldId` + 自由 `holdOffsetMs`、不额外延长成片)。经产品讨论改为 **定帧集合**：集合与普通定帧 **同等地位**（延长成片），集合内各段 **严格串行、不叠加**，UI 以子轨 + 拖边为主。下文为当前权威 spec。
 
 ### 动机与问题
 
-典型场景：**源 2.0s 起定帧 10s**（画面停在 2s 那一帧，成片插入 10s），希望在 **定帧开始后第 4s** 再出现一条箭头或旁白。
+典型场景：**源 5.0s 起定帧讲解**，希望先显示一段文字 7s，再切到箭头 3s——画面始终停在 5s 那一帧，成片上连续插入 10s。
 
-当前模型下，批注锚点一律绑定 **源时间** `startMs` / `anchorMs`。定帧期间源时钟 **停在锚点**，不会自然走到源 4s，因此：
+当前 **单条定帧批注**（阶段 7）一条内容对应一条 hold，要在同一停帧内分步出现内容时：
 
-- 「源 4.0s 的批注」在预览里往往要等到 **定帧结束、源片从 2s 继续播到 4s** 才出现；
-- 无法在 **同一帧停住的 10s 内**，于第 4s 再叠一层说明。
+- 若用源时间 `startMs = 9s` 表达第二步，预览会等到 **定帧结束、源片继续播** 才出现；
+- 若同锚点多条定帧批注重叠，编辑与成片映射易混淆。
 
-这与教程式「长停顿 + 分步讲解」的预期不符。阶段 10 引入 **定帧内相对时间** 坐标，与源时间、定帧起点坐标并列。
+阶段 10 引入 **定帧集合（Hold Collection）**：在 **单一源锚点** 下，用 **串行多段** 组织教程式分步讲解；**单段集合 = 现有普通定帧** 的特例。
 
 ### 三种批注坐标（对比）
 
-| 类型 | 锚点字段 | 适用场景 | 画面 | 是否延长成片 |
+| 类型 | 锚点 / 结构 | 适用场景 | 画面 | 是否延长成片 |
 | --- | --- | --- | --- | --- |
 | **叠加批注** | 源 `startMs` | 视频照常播放时的 callout | 推进 | 否 |
-| **定帧批注** | 源 `startMs` / `anchorMs` + `freezeDuringAnnotation` | 从锚点起停住并显示内容 | 停住 | 是（条长 = 插入时长） |
-| **定帧内批注** | `linkedHoldId` + `holdOffsetMs` | 已定帧的长停顿 **内部** 分步出现 | 停住（继承所属定帧） | 否（时长受所属定帧边界约束） |
+| **普通定帧** | 源 `startMs` + `freezeDuringAnnotation`，单条内容 | 从锚点起停住并显示 **一段** 内容 | 停住 | 是（条长 = 插入时长） |
+| **定帧集合** | 源 `sourceMs` + `segments[]` 串行多段 | 同一锚点 **分步** 讲解（文字 → 箭头 → 音频…） | 停住（整段集合内同一解码帧） | **是**（insert = **Σ segment.durationMs**） |
 
 ```text
-例 — 源 2s 定帧 10s，定帧内 +4s 出现箭头 3s
+例 — 源 5s 定帧集合，段1 文本 7s + 段2 箭头 3s
 
-源时间:     0────2s═══════════════════12s────►  （2–12s 为逻辑上的定帧区间）
-                              ↑ 源时钟在定帧段内停在 2s
+源时间:     0────5s═══════════════════15s────►  （5s 后源时钟停在 5s）
+                              ↑ 始终同一帧
 
-成片时间:   0────2s══════════════12s────►
-              [---- 定帧 insert 10s ----]
-                    ↑ +4s        ↑ +7s
-                    箭头出现      箭头消失
+成片时间:   0────5s══════════════15s────►
+              [---- 集合 insert 10s ----]
+              [段1 文本 7s][段2 箭头 3s]
+              5.0–12.0s    12.0–15.0s
 
-定帧内坐标: holdOffsetMs = 4000，durationMs = 3000
-成片绝对:   outputStart + 4000 ～ outputStart + 7000
+集合内坐标: 段2 offsetMs = 7000（派生），durationMs = 3000
+           ≠ 源 startMs = 12s
 ```
 
-**注意**：「定帧内 +4s」≠「源 4.0s」。UI 与持久化必须区分，避免再出现「看起来都是 2.0s / 4.0s，配置文件却是 20xx ms」的混淆。
+**注意**：「集合内 +7s」≠「源 12.0s」。UI 与持久化以 **集合内串行 offset** 为权威（或由段序 + 各段 `durationMs` 派生），避免与源时间混淆。
+
+### 核心产品规则
+
+1. **与普通定帧同等地位**：定帧集合出现在 **定帧轨**，参与源 ↔ 成片映射，**延长成片**；导出在 insert 段内克隆 `sourceMs` 解码帧。
+2. **集合内严格串行**：各段 `[offset, offset + duration)` 首尾相接、**不重叠**（默认 **无缝**；段间空隙若允许，仍计入 insert，见下）。
+3. **集合 insert 时长** = 从首段起点到末段终点的跨度；默认 **无缝** 时 = `Σ segment.durationMs`。
+4. **单段即普通定帧**：`segments.length === 1` 的集合与 today 的 `freezeDuringAnnotation` 批注等价，便于迁移。
+5. **同源锚点**：同一 `sourceMs` 建议 **仅一条** 定帧集合 **或** 普通定帧（实现时 merge / 互斥，避免与 `mergeHoldRegions` 打架）。
+
+#### 加段与改时长（已确认）
+
+| 操作 | 行为 |
+| --- | --- |
+| **创建集合** | 源锚点 = 播放头；默认 **一段文本**，时长默认 10s（或与现有定帧默认策略一致） |
+| **末尾追加段** | 新段接在末段之后，默认 `durationMs = 3000`；**集合总长增加**，成片 insert 同步变长 |
+| **中间插入段** | 从相邻段 **切分** 时间（总长可不变）；或先追加再拖边调整 |
+| **拖段边缘** | 改本段 `durationMs`；与相邻段 **联动**（挤占 / 让出），保持串行不重叠 |
+| **删除段** | 若仅剩一段 → 删除整个集合或降级为普通定帧；多段时剩余段重新串行 packing |
 
 ### 数据模型（拟）
 
-定帧内批注可复用 `AnnotationRegion` / `AudioAnnotationClip` 载荷，增加 **定帧内锚点** 字段（命名待定）：
+```typescript
+/** 定帧集合：单一源锚点 + 串行多段 */
+interface HoldCollection {
+  id: string;
+  sourceMs: number;              // 源锚点 = 播放头 / 定帧轨外壳位置
+  segments: HoldCollectionSegment[];
+  /** 定帧轨外壳条可选关联 id（实现时与 HoldRegion / 首段批注 id 对齐） */
+  shellAnnotationId?: string;
+}
+
+/** 集合内一段：复用批注载荷，时间在集合内串行 */
+interface HoldCollectionSegment {
+  id: string;
+  durationMs: number;            // ≥ minDuration（如 100ms）
+  type: AnnotationType;        // "text" | "figure" | …
+  /** 图形/文字：复用 AnnotationRegion 的 content / style / figureData 等 */
+  payload: Omit<AnnotationRegion, "startMs" | "endMs" | "freezeDuringAnnotation">;
+  /** 音频段：可选 AudioAnnotationClip 载荷 */
+  audio?: Pick<AudioAnnotationClip, "audioUrl" | "volume" | "duckOriginal">;
+}
+
+// 派生（不持久化为主字段）
+function segmentOffsetMs(collection: HoldCollection, segmentIndex: number): number {
+  return collection.segments
+    .slice(0, segmentIndex)
+    .reduce((sum, seg) => sum + seg.durationMs, 0);
+}
+
+function collectionHoldDurationMs(collection: HoldCollection): number {
+  return collection.segments.reduce((sum, seg) => sum + seg.durationMs, 0);
+}
+```
+
+与现有 `HoldRegion` 的关系：
 
 ```typescript
-/** 批注时间坐标：源时间（默认）或定帧内相对时间 */
-type AnnotationTiming =
-  | { kind: "source"; startMs: number; endMs: number }
-  | {
-      kind: "hold-inner";
-      linkedHoldId: string;   // 所属 HoldRegion.id（或定帧批注 id，实现时二选一绑定）
-      holdOffsetMs: number;   // 相对该定帧 outputStart 的偏移，≥ 0
-      durationMs: number;     // 定帧内持续时长
-    };
+// 同步到 holdRegions 供 timelineMapping / 导出：
+{
+  id: collection.id,
+  sourceMs: collection.sourceMs,
+  holdDurationMs: collectionHoldDurationMs(collection),
+  linkedAnnotationId: collection.shellAnnotationId,
+}
 ```
+
+**迁移**：现有 `freezeDuringAnnotation: true` 且单条批注 → 加载时转为 `HoldCollection`，`segments: [{ durationMs: endMs - startMs, payload: … }]`。
 
 约束：
 
-- `holdOffsetMs + durationMs ≤` 所属定帧的 `holdDurationMs`（超出时 UI 裁剪或提示延长定帧，产品二选一，默认 **裁剪**）。
-- 定帧内批注 **不** 再写源 `startMs = 4s` 来表达「定帧内第 4 秒」。
-- 所属定帧删除时，级联删除或降级为叠加批注（待实现时选定，默认 **级联删除**）。
+- 集合内各段 `durationMs` ≥ 最小时长；拖边不得产生负宽或重叠。
+- 删除集合 → 级联删除 `HoldRegion` 与所有 segment 载荷（默认 **级联删除**）。
+- 集合 **不** 使用源 `startMs` 表达集合内第 N 步（段序 + `durationMs` 派生 offset）。
 
-映射到成片时间（预览 / 导出）：
-
-```text
-holdOutputStart = sourceToOutputMs(hold.sourceMs)   // 或 computeHoldOutputSegments 的 outputStart
-outputVisibleStart = holdOutputStart + holdOffsetMs
-outputVisibleEnd   = outputVisibleStart + durationMs
-```
-
-可见性：`outputMs ∈ [outputVisibleStart, outputVisibleEnd)`，且 `outputMs` 落在该 hold 的插入段内。
-
-### 与用户心智：默认播放头上下文，少选手动
-
-**多数情况不需要**用户先选「参考定帧」再填「相对偏移」。与现有「播放头处添加批注」一致：
+### 时间映射
 
 ```text
-holdOffsetMs = 当前成片播放头 − 所属定帧的 holdOutputStart
-linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
+holdOutputStart = sourceToOutputMs(collection.sourceMs, holdRegions)
+segmentOutputStart[i] = holdOutputStart + segmentOffsetMs(i)
+segmentOutputEnd[i]   = segmentOutputStart[i] + segments[i].durationMs
 ```
 
-仅下列情况出现侧栏 **「所属定帧」** 下拉（人类可读：`源 2.0s · 长 10.0s`）：
+- **成片 insert 区间**：`[holdOutputStart, holdOutputStart + collectionHoldDurationMs)`
+- **段可见性**：`outputMs ∈ [segmentOutputStart[i], segmentOutputEnd[i])`
+- **视频解码**：整个 insert 段内 `video.currentTime = collection.sourceMs`
+- 与阶段 7 一致：多集合并列时仍用 **源锚点前全长累加** 定位；导出总时长仍用 insert span **并集**
 
-1. 多条定帧并集重叠，播放头落在重叠区；
-2. 播放头不在任何定帧内，但用户主动选「添加到定帧…」；
-3. 将普通批注 **转换** 为定帧内批注。
+实现：`holdCollectionSpanToOutputSpan(collection, segmentIndex, holdRegions)`（`timelineMapping.ts`，规划）。
 
-偏移通过 **拖时间轴条 / 拖播放头 / 侧栏滑块** 调节，不提供原始毫秒输入框为主入口。
+### UI 与交互
 
-### UI 展示
+#### 轨道分工
+
+| 轨道 | 内容 |
+| --- | --- |
+| **批注轨** | 仅叠加式批注（源时间） |
+| **定帧轨** | 普通定帧 **或** 定帧集合 **外壳条**（源/预览均显示锚点与集合总长） |
+| **集合内子轨**（展开后） | 各 `segment` 一条串行子 lane，**仅预览模式主编辑** |
+
+实现：预览模式下选中/展开集合 → 复用阶段 9 **子 lane** 布局，但增加 **串行约束**（拖边吸附、相邻段联动）；可为 `row-hold` 下 `row-hold-collection-{id}-lane-{n}`。
 
 #### 时间轴（预览模式 — 主编辑面）
 
-定帧内批注条画在 **成片标尺** 上，位置 = `holdOutputStart + holdOffsetMs`，与普通预览条同一坐标系。
-
 ```text
-成片轴:  0────2════════════════════12────►
-              ↑ 定帧条（10s）
-                    ↑ 定帧内批注条（+4s 起 3s）
-              2.00s                 6.00s
-              定帧+0s               定帧+4s（条标签副标题）
+成片轴:  0────5════════════════════════15────►
+              ↑ 集合外壳（10s）
+              子轨 lane 0  [====文本 7s====]
+              子轨 lane 1              [箭头 3s]
+              5.0s        12.0s        15.0s
 ```
 
 条标签建议 **双行**：
 
-| 主标签 | 副标签（hover / 选中） |
-| --- | --- |
-| 成片绝对时间 `6.00s – 9.00s` | `定帧 +4.0s`（相对所属定帧） |
+| 层级 | 主标签 | 副标签（hover / 选中） |
+| --- | --- | --- |
+| 集合外壳 | 源 `5.0s`，成片 `5.0s – 15.0s` | `定帧集合 · 2 步` |
+| 段条 | 成片 `12.0s – 15.0s` | `集合内 +7.0s – +10.0s` |
 
-精度：至少 **0.01s**，避免 2000 ms 与 2040 ms 均显示为 `2.0s`。
-
-#### 定帧条内嵌标记（可选增强）
-
-选中某定帧时，在定帧条 **内部** 用竖线/圆点标出所有定帧内批注的 offset；点击标记选中批注，在条内空白点击创建新批注（播放头同步）。
+精度：至少 **0.01s**。
 
 #### 源视频模式
 
-定帧内批注 **不在源轴上按源 4s 画条**（易与源时间混淆）。建议：
+- **外壳**：可编辑源锚点、拖动改 **集合总长**（等比缩放各段或仅改末段，产品实现时二选一，默认 **改末段 / 追加**）。
+- **子段**：不在源轴按「源 12s」画条；外壳条上可显示 **分段刻度**（只读），或侧栏「此集合内的步骤」列表。
+- 提示：**切到预览模式** 编辑段界与内容。
 
-- 定帧条上只读显示内嵌标记；或
-- 侧栏列表「此定帧内的步骤」；
-- 提示：**切到预览模式** 编辑定帧内批注。
+#### 选中与 Tab
 
-源模式继续编辑：定帧锚点、定帧总长、叠加批注。
-
-#### 轨道分工（阶段 10 目标）
-
-| 轨道 | 内容 |
-| --- | --- |
-| 批注轨 | 仅 `kind: "source"` 叠加批注 |
-| 定帧轨 | `freezeDuringAnnotation` 定帧批注（延长成片） |
-| 定帧内批注轨（或定帧子层） | `kind: "hold-inner"`，不额外延长成片 |
-
-实现上可为独立 `row-hold-inner`，或在预览模式下渲染为定帧条 **子 Item**（可复用阶段 9 展开子轨 UI）；产品以「能看清、能拖、能选中」为准。
+- 选中集合外壳 → 侧栏显示集合摘要 + 步骤列表。
+- 选中某段 → 侧栏编辑该段内容/样式（与普通批注侧栏相同字段，**无**源锚点编辑）。
+- 集合内多段重叠在同一成片时刻 **不应出现**（串行约束）；Tab 在展开子轨间循环（复用阶段 9）。
 
 ### 添加流程
 
-**流程 A — 播放头在定帧段内（默认）**
+**流程 A — 新建定帧集合（默认）**
 
-1. 切换到 **预览模式**（成片时钟）；
-2. 播放/拖动播放头到目标成片时刻（如 6.0s = 定帧 +4s）；
-3. 「添加批注」→ 类型；若播放头在某定帧 insert 段内，创建 **定帧内批注**；
-4. 自动写入 `linkedHoldId`、`holdOffsetMs`，默认 `durationMs = 3000`。
+1. 播放头在源时间目标处（如 5.0s）；
+2. 「添加定帧集合」或勾选定帧时默认创建 **集合**（单段）；
+3. 自动：`sourceMs = playhead`，`segments = [{ type: text, durationMs: 10000 }]`（默认时长可配置）；
+4. 定帧轨出现外壳条；预览模式可展开见一条子轨。
 
-菜单策略（二选一，推荐前者）：
+**流程 B — 集合内追加步骤**
 
-- **自动推断**：播放头在定帧内 → 定帧内批注；否则 → 叠加批注；
-- 或菜单增加 **「定帧内批注」**，仅在播放头位于定帧段内时启用。
+1. 选中集合 **或** 播放头在集合 insert 段内；
+2. 「添加步骤」/「在集合末尾添加批注」；
+3. 新段接在末段后，`durationMs` 默认 3000 → **集合总长 +3s**，成片变长；
+4. 用户拖段边缘调整各段占比。
 
-**流程 B — 从定帧条发起**
+**流程 C — 中间插入步骤**
 
-1. 选中定帧条 →「在此定帧内添加批注」；
-2. 播放头跳到 `holdOutputStart`（或上次编辑 offset）；
-3. 用户拖动播放头或点击条内位置 → 再选类型。
+1. 选中集合，播放头落在某段 **内部**；
+2. 「在此处插入步骤」→ 从当前段 **切分**（当前段缩短，新段占默认 3s，后续段 offset 顺延）；
+3. 若切分导致总长不足，可 **仅切分**（总长不变）或 **插入并拉长**（默认：切分，总长不变）。
 
-**流程 C — 歧义时选手动定帧**
+**流程 D — 普通定帧升级**
 
-侧栏出现「所属定帧」下拉；选定后 `holdOffsetMs` 仍由播放头或滑块决定。
+1. 选中已有单条定帧批注 →「转为定帧集合」；
+2. 生成 `HoldCollection`，原批注成为 `segments[0]`。
 
 ### 侧栏字段（拟）
 
+**集合外壳（选中外壳时）**
+
 | 字段 | 可编辑 | 说明 |
 | --- | --- | --- |
-| 所属定帧 | 仅歧义时 | `源 2.0s · 长 10.0s`（只读为主） |
-| 定帧内起点 | 是 | `+4.00s`，滑块范围 `[0, holdDuration − minDuration]` |
-| 持续 | 是 | 默认定帧内 3s |
-| 成片时间 | 只读 | `6.00s – 9.00s`，对照标尺 |
+| 源锚点 | 是（源模式） | 如 `5.00s` |
+| 集合总长 | 只读（派生） | `Σ 段长`，如 `10.00s` |
+| 成片区间 | 只读 | `5.00s – 15.00s` |
+| 步骤列表 | — | 点击选中某段 |
 
-**不要**同时提供可编辑的「源 4.0s」与「定帧 +4.0s」两套锚点；定帧内批注以 **holdOffsetMs** 为权威，成片时间为派生只读。
+**集合内某段（选中子轨条时）**
 
-### 预览与导出（目标行为）
+| 字段 | 可编辑 | 说明 |
+| --- | --- | --- |
+| 集合内区间 | 是（滑块 / 拖条） | 如 `+7.00s – +10.00s` |
+| 持续 | 是 | 默认 3s |
+| 成片时间 | 只读 | 派生 |
+| 内容 / 样式 | 是 | 与普通批注相同 |
 
-| 能力 | 定帧内批注 |
+**不要**同时可编辑「源 12.0s」与「集合内 +7.0s」；段的时间以 **集合内串行坐标** 为权威。
+
+### 预览与导出
+
+| 能力 | 定帧集合 |
 | --- | --- |
-| 视频 | 继承所属定帧：段内固定 `hold.sourceMs` 解码帧 |
-| 图形/文字 | `outputMs` 在 `[holdOutStart+offset, holdOutStart+offset+duration)` 显隐 |
-| 箭头动画 | 动画时钟 = 定帧内局部时间 `holdOffsetMs + (outputMs - holdOutStart - offset)` |
-| 音频 | 在定帧内 offset 处开始播放，不重复延长成片 |
-| 原声 | 继承定帧段静音策略 |
+| 视频 | insert 全程固定 `collection.sourceMs` |
+| 图形/文字 | 按各段 `segmentOutputStart/End` 显隐 |
+| 箭头动画 | 局部时钟 = `outputMs - segmentOutputStart[i]` |
+| 音频段 | 在段对应成片区间播放；不重复计 insert |
+| 原声 | 整个集合 insert 段继承定帧静音策略 |
+| 成片总长 | 源时长 + 定帧 insert（与普通定帧相同规则） |
 
-导出：在所属 hold 的帧克隆段内，按成片时间合成 overlay / 混音；**不**增加 `getMergedHoldOutputDurationMs` 以外的插入时长。
+导出：在 `[holdOutputStart, holdOutputStart + collectionHoldDurationMs)` 内克隆锚点帧，按段 output 窗口合成 overlay / 混音。
 
-### 与阶段 7/8 的关系
+### 与阶段 7 / 8 / 9 的关系
 
-- **阶段 7** 定帧轨：定义「停多久」；阶段 10 **不替代**定帧轨，只在已有 insert 段内编排内容。
-- **阶段 8** 预览模式：定帧内批注的 **创建与精调** 以预览模式为主；源模式可查看、不宜按源时间拖条。
-- **阶段 9** 展开多轨（已实现）：定帧轨/批注轨播放头簇子 lane；定帧内批注条目可复用同一子轨 UI
-- 定帧 **起点** 的定帧批注（`holdOffset = 0`）与 **定帧内** 批注（`holdOffset > 0`）可并存；前者走现有 `freezeDuringAnnotation`，后者走 `hold-inner`（或统一模型后 `holdOffsetMs` 可选字段，实现时再定）。
+| 阶段 | 关系 |
+| --- | --- |
+| **7 定帧轨** | 集合外壳在定帧轨；insert 语义与普通定帧一致 |
+| **8 预览模式** | 集合 **内段** 的创建、拖边、精调以预览模式为主 |
+| **9 展开多轨** | 集合展开 = 固定成员子 lane + **串行拖边约束**（比播放头簇展开多「相邻段联动」） |
+| **普通定帧** | `segments.length === 1` 时行为与 today 单条定帧一致；UI 可隐藏「集合」概念 |
 
 ### 实现要点（规划，尚未编码）
 
-1. **类型**：`AnnotationTiming` 或 `holdInner?: { linkedHoldId, holdOffsetMs }` 扩展 `AnnotationRegion` / `AudioAnnotationClip`
-2. **映射**：`holdInnerSpanToOutputSpan(linkedHold, holdOffsetMs, durationMs, holdRegions)`（`timelineMapping.ts`）
-3. **可见性**：`VideoPlayback` / `annotationRenderer` 分支 `hold-inner` 时钟
-4. **时间轴**：预览模式新轨或定帧子层；源模式只读标记
-5. **持久化**：`PROJECT_VERSION` bump；加载时校验 `linkedHoldId` 仍存在
-6. **测试**：定帧 10s + offset 4s 可见性；offset 边界；所属定帧删除；重叠定帧歧义
+1. **类型**：`HoldCollection` / `HoldCollectionSegment`（`types.ts`）；项目 JSON `holdCollections[]` + `PROJECT_VERSION` bump
+2. **同步**：`holdRegions.ts` — 集合 ↔ `HoldRegion` 双向同步
+3. **映射**：`holdCollectionSegmentToOutputSpan`、`collectionHoldDurationMs`（`timelineMapping.ts`）
+4. **时间轴**：定帧轨外壳 + 预览模式集合展开子轨；串行拖边（`TimelineEditor` / `Item`）
+5. **预览 / 导出**：`VideoPlayback`、`annotationRenderer` 按段 output 窗口分支
+6. **迁移**：单条 `freezeDuringAnnotation` → 单段集合
+7. **测试**：创建默认 10s 文本 → 追加 3s 段 → 总长 13s；中间切分；拖边不重叠；导出时长
 
 ### 验证（阶段 10 完成后）
 
-- 源 2s 定帧 10s → 预览 6s 处添加箭头 → 仅 6–9s 成片可见，画面始终为 2s 帧
-- 定帧内 +0s 与 +4s 两条批注互不干扰；配置文件 `holdOffsetMs` 分别为 `0`、`4000`
-- 侧栏与条标签：成片 6.00s 与「定帧 +4.00s」一致
-- 导出 MP4 总长仍 = 源时长 + 定帧并集（不因定帧内批注额外加长）
+- 源 5s 创建集合，默认文本 10s → 预览 5–15s 停同一帧，首段全程可见
+- 追加箭头段 3s → 预览 12–15s 仅箭头可见，成片总长 15s → 18s（若从 10s 追加）或 5–15s 内切分为 7+3（若切分）
+- JSON 存 `segments[].durationMs` 与段序，**不**用 `startMs: 12000` 表达第二步
+- 侧栏「集合内 +7.0s」与成片 12.0s 一致
+- 导出 MP4：insert = 集合段长之和，与普通定帧映射规则一致
 
 ### 非目标（阶段 10）
 
-- 定帧内批注 **不** 单独拉长成片（那是定帧轨职责）；
-- 不替代 TTS/录音（阶段 3/4）；
-- 自动字幕默认仍按 **源时间** 生成；定帧内字幕需另定规则或阶段 11+。
+- 集合内段 **不可** 自由重叠（重叠编辑走阶段 9 的 **不同** 定帧/批注，非同一集合内）
+- 不替代 TTS / 录音（阶段 3/4）；音频可作为集合内一种 segment 类型
+- 自动字幕默认仍按 **源时间**；集合内字幕规则另定（阶段 11+）
+- **不做** 已废弃的「attach 到任意 hold 的自由 `holdOffsetMs` 子定帧」模型
 
 ## 实现路线图
 
@@ -679,11 +737,11 @@ linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
 | **7** | 定帧轨产品定义：仅定帧轨显示、条长=定帧时长、并集映射总时长 | ✅ 已实现 |
 | **8** | 源视频/预览双模式 + 时间轴源时间编辑 | ✅ 已实现 |
 | **9** | 批注重叠展开多轨：播放头簇展开/收起、子 lane、滚轮快捷键 | ✅ 已实现 |
-| **10** | 定帧内批注：`linkedHoldId` + `holdOffsetMs` + 预览/导出显隐 | 已确认，待实现 |
+| **10** | 定帧集合：`HoldCollection` + 串行 `segments` + 子轨拖边 + 预览/导出 | 已确认，待实现 |
 | **11** | 体验：批注模板、批量编辑、复制到其他锚点                          | 待做    |
 
 
-优先级建议：叠加式 **1 → 2** 优先；定帧 **5 → 7 → 8 → 9** 已落地；下一步 **10** 定帧内批注（新时间坐标）；教程式长定帧分步场景依赖阶段 10。
+优先级建议：叠加式 **1 → 2** 优先；定帧 **5 → 7 → 8 → 9** 已落地；下一步 **10** 定帧集合（教程式串行分步）；单段集合与现有普通定帧兼容。
 
 ## 风险与兼容
 
@@ -693,8 +751,8 @@ linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
 4. **GIF 导出**：音频批注 GIF 无声；定帧需同帧重复
 5. **多条重叠批注**：叠加轨 zIndex 排序已有；定帧轨允许重叠，成片时长取并集；阶段 9 播放头簇展开多轨改善编辑，不改变播放语义
 6. **阶段 7 迁移**：旧项目独立 `holdDurationMs` 需与 span 对齐或忽略
-7. **阶段 10**：定帧内批注与源时间批注、定帧起点批注三套坐标并存；文档与 UI 必须明确「定帧 +Xs」与「源 Xs」
-8. **重叠定帧**：定帧内批注必须绑定 `linkedHoldId`，不能仅靠成片时间反推
+7. **阶段 10**：定帧集合与叠加批注、普通定帧三套模型并存；单段集合 = 普通定帧；UI 须区分「源 Xs」与「集合内 +Xs」
+8. **同源锚点**：定帧集合与普通定帧互斥或 merge；集合内段 strictly 串行，不靠成片时间反推所属集合
 
 ## 相关文件
 
@@ -734,15 +792,17 @@ linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
 | `src/components/video-editor/videoPlayback/videoEventHandlers.ts` | 定帧预览 rAF |
 | `src/components/video-editor/AnnotationSettingsPanel.tsx` | 定帧开关（阶段 7 移除时长滑块） |
 
-定帧内批注（阶段 10，规划）：
+定帧集合（阶段 10，规划）：
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/lib/timelineMapping.ts` | `holdInnerSpanToOutputSpan`、定帧内可见性 |
-| `src/components/video-editor/types.ts` | `AnnotationTiming` / `hold-inner` 字段 |
-| `src/components/video-editor/timeline/TimelineEditor.tsx` | 定帧内轨 / 定帧子层 UI |
-| `src/components/video-editor/VideoPlayback.tsx` | 定帧内 overlay 显隐与动画时钟 |
-| `src/lib/exporter/annotationRenderer.ts` | 导出按 hold-offset 合成 |
+| `src/components/video-editor/types.ts` | `HoldCollection`、`HoldCollectionSegment` |
+| `src/lib/holdRegions.ts` | 集合 ↔ `HoldRegion` 同步 |
+| `src/lib/timelineMapping.ts` | `holdCollectionSegmentToOutputSpan`、集合 insert 时长 |
+| `src/components/video-editor/timeline/TimelineEditor.tsx` | 定帧轨外壳 + 集合展开串行子轨、拖边联动 |
+| `src/components/video-editor/VideoPlayback.tsx` | 按段 output 窗口显隐与动画时钟 |
+| `src/lib/exporter/annotationRenderer.ts` | 导出按集合段合成 |
+| `src/components/video-editor/projectPersistence.ts` | `holdCollections[]` 持久化与迁移 |
 
 重叠展开多轨（阶段 9）：
 
@@ -787,10 +847,11 @@ npx vitest run src/lib/overlapClusters.test.ts
 - 无重叠或播放头不在簇内 → 与折叠态相同
 - Alt+滚轮平移、滚轮垂直滚动、Ctrl+滚轮缩放
 
-定帧内批注（阶段 10 后）：
+定帧集合（阶段 10 后）：
 
-- 长定帧（如 10s）内于 +4s 添加箭头 → 预览 6s 出现、画面仍为定帧锚点帧
-- 项目 JSON 存 `holdOffsetMs: 4000`，非 `startMs: 4000` 冒充源时间
+- 源 5s 创建集合，默认文本段 10s → 预览停 5s 帧，首段 5–15s 成片可见
+- 追加 3s 箭头段 → 子轨串行、拖边可调；JSON 存 `segments[]`，非源 `startMs` 冒充集合内步骤
+- 导出 MP4 insert 时长 = 各段之和，映射规则与普通定帧一致
 
 ---
 
@@ -827,10 +888,11 @@ interface HoldRegion {
 - 定帧段内：`video.currentTime` 固定在对应 `sourceMs`，rAF 推进成片时间
 - 定帧批注 overlay 按**成片时间**显隐
 
-定帧内批注（阶段 10，拟）：
+定帧集合（阶段 10，拟）：
 
-- 可见区间 = `holdOutputStart + holdOffsetMs` 起，时长 `durationMs`
-- 定帧段内 `video.currentTime` 仍固定于 `hold.sourceMs`；overlay / 动画按 **outputMs** 与 **hold 内局部时钟** 驱动
+- 可见区间 = `holdOutputStart + segmentOffsetMs` 起，时长 `segment.durationMs`
+- 整个集合 insert 段内 `video.currentTime` 固定于 `collection.sourceMs`；overlay / 动画按 **段级 output 窗口** 驱动
+- 单段集合行为与 today 单条定帧批注一致
 
 ### 导出
 
