@@ -16,6 +16,12 @@
 		"pressBlur": "按 B 添加模糊区域",
 		"holdSegments": "定帧批注（源视频时间轴）"
 	},
+	"laneExpand": {
+		"expandHold": "展开播放头处重叠的定帧条到多轨",
+		"collapseHold": "收起播放头处定帧子轨",
+		"expandAnnotation": "展开播放头处重叠的批注到多轨",
+		"collapseAnnotation": "收起播放头处批注子轨"
+	},
 	"playbackMode": {
 		"source": "源视频",
 		"preview": "预览",
@@ -23,6 +29,7 @@
 		"sourceTime": "源 {{current}} / {{total}}"
 	},
 	"labels": {
+		"scrollVertical": "上下滚动",
 		"pan": "平移",
 		"zoom": "缩放",
 		"trim": "剪辑",

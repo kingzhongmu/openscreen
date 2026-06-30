@@ -59,9 +59,15 @@ export const FIXED_SHORTCUTS: FixedShortcut[] = [
 		bindings: [{ key: "delete" }, { key: "backspace" }],
 	},
 	{
+		i18nKey: "scrollTimelineVertical",
+		label: "Scroll Timeline",
+		display: "Scroll",
+		bindings: [],
+	},
+	{
 		i18nKey: "panTimeline",
 		label: "Pan Timeline",
-		display: "Shift + Ctrl + Scroll",
+		display: "Alt + Scroll",
 		bindings: [],
 	},
 	{ i18nKey: "zoomTimeline", label: "Zoom Timeline", display: "Ctrl + Scroll", bindings: [] },

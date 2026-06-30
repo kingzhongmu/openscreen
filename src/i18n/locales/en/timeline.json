@@ -20,6 +20,12 @@
 		"pressSpeed": "Press S to add speed",
 		"holdSegments": "Freeze-frame annotations (source timeline)"
 	},
+	"laneExpand": {
+		"expandHold": "Expand overlapping freeze items at playhead into separate lanes",
+		"collapseHold": "Collapse freeze lanes at playhead",
+		"expandAnnotation": "Expand overlapping annotations at playhead into separate lanes",
+		"collapseAnnotation": "Collapse annotation lanes at playhead"
+	},
 	"playbackMode": {
 		"source": "Source",
 		"preview": "Preview",
@@ -27,6 +33,7 @@
 		"sourceTime": "Source {{current}} / {{total}}"
 	},
 	"labels": {
+		"scrollVertical": "Scroll vertically",
 		"pan": "Pan",
 		"zoom": "Zoom",
 		"trim": "Trim",

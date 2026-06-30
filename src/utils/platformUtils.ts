@@ -59,6 +59,7 @@ export const formatShortcut = async (keys: string[]): Promise<string> => {
 		.map((key) => {
 			if (key.toLowerCase() === "mod") return isMacPlatform ? "⌘" : "Ctrl";
 			if (key.toLowerCase() === "shift") return isMacPlatform ? "⇧" : "Shift";
+			if (key.toLowerCase() === "alt") return isMacPlatform ? "⌥" : "Alt";
 			return key;
 		})
 		.join(" + ");

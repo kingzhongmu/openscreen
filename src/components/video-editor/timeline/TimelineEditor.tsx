@@ -11,7 +11,15 @@ import {
 	WandSparkles,
 	ZoomIn,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	type ReactNode,
+	type RefObject,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
 import { Button } from "@/components/ui/button";
@@ -24,6 +32,16 @@ import {
 import { useScopedT } from "@/contexts/I18nContext";
 import { useShortcuts } from "@/contexts/ShortcutsContext";
 import { useAudioPeaks } from "@/hooks/useAudioPeaks";
+import { FREEZE_ANCHOR_SNAP_THRESHOLD_MS } from "@/lib/holdRegions";
+import {
+	assignOverlapLanes,
+	getPlayheadExpandCluster,
+	groupItemsByLaneRow,
+	type LaneRowLayoutOptions,
+	loadExpandedClustersByTrack,
+	saveExpandedClustersByTrack,
+	type TimelineSpanItem,
+} from "@/lib/overlapClusters";
 import { matchesShortcut } from "@/lib/shortcuts";
 import {
 	getFreezeLinkedOutputSpan,
@@ -153,6 +171,136 @@ interface TimelineRenderItem {
 	speedValue?: number;
 	isAutoFocus?: boolean;
 	variant: "zoom" | "trim" | "annotation" | "speed" | "blur" | "audio" | "hold";
+	/** Source-time anchor for hold items (lane expand by same anchor). */
+	sourceStartMs?: number;
+}
+
+function LanedTrackRows({
+	baseRowId,
+	items,
+	playheadMs,
+	storedClusterId,
+	onToggleClusterExpand,
+	hint,
+	isEmpty,
+	expandTitle,
+	layoutOptions,
+	renderItem,
+}: {
+	baseRowId: string;
+	items: TimelineRenderItem[];
+	playheadMs: number;
+	storedClusterId: string | null | undefined;
+	onToggleClusterExpand: (clusterId: string) => void;
+	hint?: string;
+	isEmpty?: boolean;
+	expandTitle: string;
+	layoutOptions?: LaneRowLayoutOptions;
+	renderItem: (item: TimelineRenderItem, rowId: string) => ReactNode;
+}) {
+	const spanById = useMemo(() => {
+		const map = new Map<string, { startMs: number; endMs: number }>();
+		for (const item of items) {
+			map.set(item.id, { startMs: item.span.start, endMs: item.span.end });
+		}
+		return map;
+	}, [items]);
+
+	const spanItems = useMemo(
+		(): TimelineSpanItem[] =>
+			items.map((item) => {
+				const span = spanById.get(item.id);
+				return {
+					id: item.id,
+					startMs: span?.startMs ?? 0,
+					endMs: span?.endMs ?? 0,
+				};
+			}),
+		[items, spanById],
+	);
+
+	const playheadCluster = useMemo(
+		() => getPlayheadExpandCluster(spanItems, playheadMs, baseRowId, layoutOptions),
+		[spanItems, playheadMs, baseRowId, layoutOptions],
+	);
+
+	const isClusterExpanded = Boolean(playheadCluster && storedClusterId === playheadCluster.id);
+
+	const laneGroups = useMemo(
+		() =>
+			groupItemsByLaneRow(
+				items,
+				baseRowId,
+				spanById,
+				playheadMs,
+				isClusterExpanded ? playheadCluster?.id : null,
+				layoutOptions,
+			),
+		[items, baseRowId, spanById, playheadMs, isClusterExpanded, playheadCluster?.id, layoutOptions],
+	);
+
+	const hasPlayheadOverlap = playheadCluster !== null;
+
+	return (
+		<>
+			{laneGroups.map((group) => (
+				<Row
+					key={group.rowId}
+					id={group.rowId}
+					isEmpty={Boolean(isEmpty && group.laneIndex === 0 && group.items.length === 0)}
+					hint={group.laneIndex === 0 ? hint : undefined}
+					isSubLane={group.laneIndex > 0}
+					laneExpand={
+						group.laneIndex === 0 && hasPlayheadOverlap && playheadCluster
+							? {
+									expanded: isClusterExpanded,
+									onToggle: () => onToggleClusterExpand(playheadCluster.id),
+									title: expandTitle,
+								}
+							: undefined
+					}
+				>
+					{group.items.map((item) => renderItem(item, group.rowId))}
+				</Row>
+			))}
+		</>
+	);
+}
+
+function cycleOverlappingSelection(
+	candidates: TimelineSpanItem[],
+	selectedId: string | null | undefined,
+	shiftKey: boolean,
+	expanded: boolean,
+	onSelect: (id: string) => void,
+): boolean {
+	if (candidates.length === 0) {
+		return false;
+	}
+
+	let pool = candidates;
+	if (expanded && selectedId && candidates.length > 1) {
+		const lanes = assignOverlapLanes(candidates);
+		const selectedLane = lanes.get(selectedId);
+		if (selectedLane !== undefined) {
+			const laneFiltered = candidates.filter((item) => lanes.get(item.id) === selectedLane);
+			if (laneFiltered.length > 0) {
+				pool = laneFiltered;
+			}
+		}
+	}
+
+	if (!selectedId || !pool.some((item) => item.id === selectedId)) {
+		onSelect(pool[0].id);
+		return true;
+	}
+
+	const currentIndex = pool.findIndex((item) => item.id === selectedId);
+	const nextIndex = shiftKey
+		? (currentIndex - 1 + pool.length) % pool.length
+		: (currentIndex + 1) % pool.length;
+	onSelect(pool[nextIndex].id);
+	return true;
 }
 
 const SCALE_CANDIDATES = [
@@ -238,6 +386,43 @@ function clampVisibleRange(candidate: Range, totalMs: number): Range {
 	return { start, end: start + span };
 }
 
+function isAltWheelModifier(event: WheelEvent, altKeyHeld: boolean): boolean {
+	return event.altKey || event.getModifierState("Alt") || altKeyHeld;
+}
+
+function zoomTimelineRangeAtPointer(
+	event: WheelEvent,
+	timelineElement: HTMLElement,
+	range: Range,
+	videoDurationMs: number,
+	minVisibleRangeMs: number,
+	sidebarWidth: number,
+	pixelsToValue: (px: number) => number,
+): Range {
+	const visibleMs = range.end - range.start;
+	if (visibleMs <= 0) {
+		return range;
+	}
+
+	const rect = timelineElement.getBoundingClientRect();
+	const pointerX = Math.max(0, event.clientX - rect.left - sidebarWidth);
+	const pointerMs = range.start + pixelsToValue(pointerX);
+
+	const zoomFactor = event.deltaY > 0 ? 1.12 : 1 / 1.12;
+	const newVisibleMs = Math.max(
+		minVisibleRangeMs,
+		Math.min(visibleMs * zoomFactor, videoDurationMs),
+	);
+
+	if (Math.abs(newVisibleMs - visibleMs) < 1) {
+		return range;
+	}
+
+	const ratio = (pointerMs - range.start) / visibleMs;
+	const newStart = pointerMs - ratio * newVisibleMs;
+	return clampVisibleRange({ start: newStart, end: newStart + newVisibleMs }, videoDurationMs);
+}
+
 function normalizeWheelDelta(delta: number, deltaMode: number, pageSizePx: number): number {
 	if (deltaMode === WheelEvent.DOM_DELTA_LINE) {
 		return delta * 16;
@@ -287,6 +472,10 @@ function shouldStartTimelineScrub(target: EventTarget | null, timelineElement: H
 	}
 
 	for (let element: HTMLElement | null = target; element && element !== timelineElement; ) {
+		if (element.hasAttribute("data-timeline-control")) {
+			return false;
+		}
+
 		const className = element.className;
 		const classText = typeof className === "string" ? className : "";
 
@@ -596,7 +785,11 @@ function Timeline({
 	items,
 	videoDurationMs,
 	currentTimeMs,
+	minVisibleRangeMs,
+	timelineScrollRef,
 	timelineReadOnly = false,
+	expandedClustersByTrack,
+	onToggleClusterExpand,
 	onSeek,
 	onRangeChange,
 	onSelectZoom,
@@ -618,7 +811,11 @@ function Timeline({
 	items: TimelineRenderItem[];
 	videoDurationMs: number;
 	currentTimeMs: number;
+	minVisibleRangeMs: number;
+	timelineScrollRef?: RefObject<HTMLDivElement | null>;
 	timelineReadOnly?: boolean;
+	expandedClustersByTrack: Record<string, string>;
+	onToggleClusterExpand: (trackId: string, clusterId: string) => void;
 	onSeek?: (time: number) => void;
 	onRangeChange?: (updater: (previous: Range) => Range) => void;
 	onSelectZoom?: (id: string | null) => void;
@@ -642,7 +839,36 @@ function Timeline({
 	const localTimelineRef = useRef<HTMLDivElement | null>(null);
 	const isScrubbingTimelineRef = useRef(false);
 	const scrubPointerIdRef = useRef<number | null>(null);
+	const altWheelModifierRef = useRef(false);
 	const peaks = useAudioPeaks(showTrimWaveform ? videoUrl : undefined);
+
+	useEffect(() => {
+		const setAltHeld = (held: boolean) => {
+			altWheelModifierRef.current = held;
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Alt") {
+				setAltHeld(true);
+			}
+		};
+		const onKeyUp = (event: KeyboardEvent) => {
+			if (event.key === "Alt") {
+				setAltHeld(false);
+			}
+		};
+		const onBlur = () => {
+			setAltHeld(false);
+		};
+
+		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("keyup", onKeyUp);
+		window.addEventListener("blur", onBlur);
+		return () => {
+			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("keyup", onKeyUp);
+			window.removeEventListener("blur", onBlur);
+		};
+	}, []);
 
 	const setRefs = useCallback(
 		(node: HTMLDivElement | null) => {
@@ -759,44 +985,97 @@ function Timeline({
 	}, []);
 
 	const handleTimelineWheel = useCallback(
-		(event: React.WheelEvent<HTMLDivElement>) => {
-			if (!onRangeChange || event.ctrlKey || event.metaKey || videoDurationMs <= 0) {
+		(event: WheelEvent) => {
+			const scrollContainer = timelineScrollRef?.current;
+			const timelineElement = localTimelineRef.current ?? scrollContainer;
+			if (!scrollContainer || !timelineElement || videoDurationMs <= 0 || !onRangeChange) {
 				return;
 			}
 
-			const visibleMs = range.end - range.start;
-			if (visibleMs <= 0 || videoDurationMs <= visibleMs) {
-				return;
-			}
-
-			const dominantDelta =
-				Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-			if (dominantDelta === 0) {
-				return;
-			}
-
-			event.preventDefault();
-
-			const pageWidthPx = Math.max(event.currentTarget.clientWidth - sidebarWidth, 1);
-			const normalizedDeltaPx = normalizeWheelDelta(dominantDelta, event.deltaMode, pageWidthPx);
-			const shiftMs = pixelsToValue(normalizedDeltaPx);
-
-			onRangeChange((previous) => {
-				const nextRange = clampVisibleRange(
-					{
-						start: previous.start + shiftMs,
-						end: previous.end + shiftMs,
-					},
+			// Ctrl/Meta + scroll: zoom around pointer
+			if (event.ctrlKey || event.metaKey) {
+				event.preventDefault();
+				const nextRange = zoomTimelineRangeAtPointer(
+					event,
+					timelineElement,
+					range,
 					videoDurationMs,
+					minVisibleRangeMs,
+					sidebarWidth,
+					pixelsToValue,
 				);
+				if (nextRange.start !== range.start || nextRange.end !== range.end) {
+					onRangeChange(() => nextRange);
+				}
+				return;
+			}
 
-				return nextRange.start === previous.start && nextRange.end === previous.end
-					? previous
-					: nextRange;
-			});
+			// Alt + scroll: horizontal pan (Windows may omit altKey on wheel — track key state too)
+			if (isAltWheelModifier(event, altWheelModifierRef.current)) {
+				event.preventDefault();
+
+				const visibleMs = range.end - range.start;
+				if (visibleMs <= 0 || videoDurationMs <= visibleMs) {
+					return;
+				}
+
+				const dominantDelta =
+					Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+				if (dominantDelta === 0) {
+					return;
+				}
+
+				const pageWidthPx = Math.max(timelineElement.clientWidth - sidebarWidth, 1);
+				const normalizedDeltaPx = normalizeWheelDelta(dominantDelta, event.deltaMode, pageWidthPx);
+				const shiftMs = pixelsToValue(normalizedDeltaPx);
+
+				onRangeChange((previous) => {
+					const nextRange = clampVisibleRange(
+						{
+							start: previous.start + shiftMs,
+							end: previous.end + shiftMs,
+						},
+						videoDurationMs,
+					);
+
+					return nextRange.start === previous.start && nextRange.end === previous.end
+						? previous
+						: nextRange;
+				});
+				return;
+			}
+
+			// Plain scroll: vertical — scroll the timeline panel
+			if (event.deltaY !== 0) {
+				scrollContainer.scrollTop += event.deltaY;
+				event.preventDefault();
+			}
 		},
-		[onRangeChange, videoDurationMs, range.end, range.start, sidebarWidth, pixelsToValue],
+		[
+			onRangeChange,
+			videoDurationMs,
+			minVisibleRangeMs,
+			range,
+			sidebarWidth,
+			pixelsToValue,
+			timelineScrollRef,
+		],
 	);
+
+	useEffect(() => {
+		const scrollContainer = timelineScrollRef?.current;
+		if (!scrollContainer) {
+			return;
+		}
+
+		scrollContainer.addEventListener("wheel", handleTimelineWheel, {
+			passive: false,
+			capture: true,
+		});
+		return () => {
+			scrollContainer.removeEventListener("wheel", handleTimelineWheel, { capture: true });
+		};
+	}, [handleTimelineWheel, timelineScrollRef]);
 
 	const zoomItems = items.filter((item) => item.rowId === ZOOM_ROW_ID);
 	const trimItems = items.filter((item) => item.rowId === TRIM_ROW_ID);
@@ -805,6 +1084,61 @@ function Timeline({
 	const audioAnnotationItems = items.filter((item) => item.rowId === AUDIO_ANNOTATION_ROW_ID);
 	const blurItems = items.filter((item) => item.rowId === BLUR_ROW_ID);
 	const speedItems = items.filter((item) => item.rowId === SPEED_ROW_ID);
+
+	const holdSpanItems = useMemo(
+		(): TimelineSpanItem[] =>
+			holdItems.map((item) => ({
+				id: item.id,
+				startMs: item.span.start,
+				endMs: item.span.end,
+			})),
+		[holdItems],
+	);
+
+	const holdSourceAnchorById = useMemo(() => {
+		const map = new Map<string, number>();
+		for (const item of holdItems) {
+			map.set(item.id, item.sourceStartMs ?? item.span.start);
+		}
+		return map;
+	}, [holdItems]);
+
+	const holdLayoutOptions = useMemo(
+		(): LaneRowLayoutOptions => ({
+			sourceAnchorById: holdSourceAnchorById,
+			anchorSnapThresholdMs: FREEZE_ANCHOR_SNAP_THRESHOLD_MS,
+		}),
+		[holdSourceAnchorById],
+	);
+
+	const annotationSpanItems = useMemo(
+		(): TimelineSpanItem[] =>
+			annotationItems.map((item) => ({
+				id: item.id,
+				startMs: item.span.start,
+				endMs: item.span.end,
+			})),
+		[annotationItems],
+	);
+
+	const holdPlayheadCluster = useMemo(
+		() => getPlayheadExpandCluster(holdSpanItems, currentTimeMs, HOLD_ROW_ID, holdLayoutOptions),
+		[holdSpanItems, currentTimeMs, holdLayoutOptions],
+	);
+
+	const holdIsClusterExpanded = Boolean(
+		holdPlayheadCluster && expandedClustersByTrack[HOLD_ROW_ID] === holdPlayheadCluster.id,
+	);
+
+	const annotationPlayheadCluster = useMemo(
+		() => getPlayheadExpandCluster(annotationSpanItems, currentTimeMs, ANNOTATION_ROW_ID),
+		[annotationSpanItems, currentTimeMs],
+	);
+
+	const annotationIsClusterExpanded = Boolean(
+		annotationPlayheadCluster &&
+			expandedClustersByTrack[ANNOTATION_ROW_ID] === annotationPlayheadCluster.id,
+	);
 
 	return (
 		<div
@@ -818,7 +1152,6 @@ function Timeline({
 			onPointerCancel={stopTimelineScrub}
 			onPointerLeave={handleTimelinePointerLeave}
 			onLostPointerCapture={handleTimelineLostPointerCapture}
-			onWheel={handleTimelineWheel}
 		>
 			<div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff05_1px,transparent_1px)] bg-[length:24px_100%] pointer-events-none" />
 			<TimelineAxis videoDurationMs={videoDurationMs} currentTimeMs={currentTimeMs} />
@@ -883,14 +1216,24 @@ function Timeline({
 			</Row>
 
 			{holdItems.length > 0 && (
-				<Row id={HOLD_ROW_ID} isEmpty={false} hint={t("hints.holdSegments")}>
-					{holdItems.map((item) => {
+				<LanedTrackRows
+					baseRowId={HOLD_ROW_ID}
+					items={holdItems}
+					playheadMs={currentTimeMs}
+					storedClusterId={expandedClustersByTrack[HOLD_ROW_ID]}
+					layoutOptions={holdLayoutOptions}
+					onToggleClusterExpand={(clusterId) => onToggleClusterExpand(HOLD_ROW_ID, clusterId)}
+					hint={t("hints.holdSegments")}
+					expandTitle={
+						holdIsClusterExpanded ? t("laneExpand.collapseHold") : t("laneExpand.expandHold")
+					}
+					renderItem={(item, rowId) => {
 						const isAudio = item.variant === "audio";
 						return (
 							<Item
 								id={item.id}
 								key={item.id}
-								rowId={item.rowId}
+								rowId={rowId}
 								span={item.span}
 								isSelected={
 									isAudio ? item.id === selectedAudioAnnotationId : item.id === selectedAnnotationId
@@ -904,20 +1247,28 @@ function Timeline({
 								{item.label}
 							</Item>
 						);
-					})}
-				</Row>
+					}}
+				/>
 			)}
 
-			<Row
-				id={ANNOTATION_ROW_ID}
+			<LanedTrackRows
+				baseRowId={ANNOTATION_ROW_ID}
+				items={annotationItems}
+				playheadMs={currentTimeMs}
+				storedClusterId={expandedClustersByTrack[ANNOTATION_ROW_ID]}
+				onToggleClusterExpand={(clusterId) => onToggleClusterExpand(ANNOTATION_ROW_ID, clusterId)}
 				isEmpty={annotationItems.length === 0}
 				hint={t("hints.pressAnnotation")}
-			>
-				{annotationItems.map((item) => (
+				expandTitle={
+					annotationIsClusterExpanded
+						? t("laneExpand.collapseAnnotation")
+						: t("laneExpand.expandAnnotation")
+				}
+				renderItem={(item, rowId) => (
 					<Item
 						id={item.id}
 						key={item.id}
-						rowId={item.rowId}
+						rowId={rowId}
 						span={item.span}
 						isSelected={item.id === selectedAnnotationId}
 						onSelect={() => onSelectAnnotation?.(item.id)}
@@ -926,8 +1277,8 @@ function Timeline({
 					>
 						{item.label}
 					</Item>
-				))}
-			</Row>
+				)}
+			/>
 
 			<Row
 				id={AUDIO_ANNOTATION_ROW_ID}
@@ -1066,6 +1417,23 @@ export default function TimelineEditor({
 		return currentTimeMs;
 	}, [usesOutputTimelineAxis, outputPlaybackTimeMs, currentTimeMs, holdRegions]);
 
+	const [expandedClustersByTrack, setExpandedClustersByTrack] = useState(() =>
+		loadExpandedClustersByTrack(),
+	);
+
+	const toggleClusterExpand = useCallback((trackId: string, clusterId: string) => {
+		setExpandedClustersByTrack((previous) => {
+			const next = { ...previous };
+			if (next[trackId] === clusterId) {
+				delete next[trackId];
+			} else {
+				next[trackId] = clusterId;
+			}
+			saveExpandedClustersByTrack(next);
+			return next;
+		});
+	}, []);
+
 	const mapSpanToTimeline = useCallback(
 		(startMs: number, endMs: number) => {
 			if (!usesOutputTimelineAxis) {
@@ -1104,16 +1472,27 @@ export default function TimelineEditor({
 	const [keyframes, setKeyframes] = useState<{ id: string; time: number }[]>([]);
 	const [selectedKeyframeId, setSelectedKeyframeId] = useState<string | null>(null);
 	const [scrollLabels, setScrollLabels] = useState({
-		pan: "Scroll",
+		scroll: "Scroll",
+		pan: "Alt + Scroll",
 		zoom: "Ctrl + Scroll",
 	});
 	const timelineContainerRef = useRef<HTMLDivElement>(null);
 	const { shortcuts: keyShortcuts, isMac } = useShortcuts();
 
 	useEffect(() => {
-		formatShortcut(["mod", "Scroll"]).then((zoom) => {
-			setScrollLabels({ pan: "Scroll", zoom });
-		});
+		let cancelled = false;
+		void (async () => {
+			const [pan, zoom] = await Promise.all([
+				formatShortcut(["alt", "Scroll"]),
+				formatShortcut(["mod", "Scroll"]),
+			]);
+			if (!cancelled) {
+				setScrollLabels({ scroll: "Scroll", pan, zoom });
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	const addKeyframe = useCallback(() => {
@@ -1431,6 +1810,157 @@ export default function TimelineEditor({
 		[videoDuration, totalMs, onAnnotationAdded],
 	);
 
+	const holdTabSpanItems = useMemo((): TimelineSpanItem[] => {
+		const items: TimelineSpanItem[] = [];
+		for (const region of annotationRegions) {
+			if (!region.freezeDuringAnnotation) {
+				continue;
+			}
+			const span = mapFreezeSpanToTimeline(region.startMs, region.endMs);
+			items.push({ id: region.id, startMs: span.start, endMs: span.end });
+		}
+		for (const clip of audioAnnotationClips) {
+			if (!clip.freezeDuringAnnotation) {
+				continue;
+			}
+			const span = mapFreezeSpanToTimeline(clip.anchorMs, clip.anchorMs + clip.durationMs);
+			items.push({ id: clip.id, startMs: span.start, endMs: span.end });
+		}
+		return items;
+	}, [annotationRegions, audioAnnotationClips, mapFreezeSpanToTimeline]);
+
+	const holdTabLayoutOptions = useMemo((): LaneRowLayoutOptions => {
+		const sourceAnchorById = new Map<string, number>();
+		for (const region of annotationRegions) {
+			if (region.freezeDuringAnnotation) {
+				sourceAnchorById.set(region.id, region.startMs);
+			}
+		}
+		for (const clip of audioAnnotationClips) {
+			if (clip.freezeDuringAnnotation) {
+				sourceAnchorById.set(clip.id, clip.anchorMs);
+			}
+		}
+		return {
+			sourceAnchorById,
+			anchorSnapThresholdMs: FREEZE_ANCHOR_SNAP_THRESHOLD_MS,
+		};
+	}, [annotationRegions, audioAnnotationClips]);
+
+	const annotationTabSpanItems = useMemo((): TimelineSpanItem[] => {
+		return annotationRegions
+			.filter((region) => !region.freezeDuringAnnotation)
+			.map((region) => {
+				const span = mapSpanToTimeline(region.startMs, region.endMs);
+				return { id: region.id, startMs: span.start, endMs: span.end };
+			});
+	}, [annotationRegions, mapSpanToTimeline]);
+
+	const handleTabCycle = useCallback(
+		(e: KeyboardEvent) => {
+			if (e.key !== "Tab") {
+				return;
+			}
+
+			const playheadMs = timelinePlayheadMs;
+			const atPlayhead = (items: TimelineSpanItem[]) =>
+				items.filter((item) => playheadMs >= item.startMs && playheadMs <= item.endMs);
+
+			const holdAtPlayhead = atPlayhead(holdTabSpanItems);
+			const annotationAtPlayhead = atPlayhead(annotationTabSpanItems).sort((a, b) => {
+				const zA = annotationRegions.find((region) => region.id === a.id)?.zIndex ?? 0;
+				const zB = annotationRegions.find((region) => region.id === b.id)?.zIndex ?? 0;
+				return zA - zB;
+			});
+
+			const selectedFreezeAnnotation =
+				Boolean(selectedAnnotationId) &&
+				annotationRegions.some(
+					(region) => region.id === selectedAnnotationId && region.freezeDuringAnnotation,
+				);
+			const selectedFreezeAudio =
+				Boolean(selectedAudioAnnotationId) &&
+				audioAnnotationClips.some(
+					(clip) => clip.id === selectedAudioAnnotationId && clip.freezeDuringAnnotation,
+				);
+			const onHoldTrack = selectedFreezeAnnotation || selectedFreezeAudio;
+
+			const holdCluster = getPlayheadExpandCluster(
+				holdTabSpanItems,
+				timelinePlayheadMs,
+				HOLD_ROW_ID,
+				holdTabLayoutOptions,
+			);
+			const holdExpanded = Boolean(
+				holdCluster && expandedClustersByTrack[HOLD_ROW_ID] === holdCluster.id,
+			);
+			const annotationCluster = getPlayheadExpandCluster(
+				annotationTabSpanItems,
+				timelinePlayheadMs,
+				ANNOTATION_ROW_ID,
+			);
+			const annotationExpanded = Boolean(
+				annotationCluster && expandedClustersByTrack[ANNOTATION_ROW_ID] === annotationCluster.id,
+			);
+
+			const cycleHold = () =>
+				cycleOverlappingSelection(
+					holdAtPlayhead,
+					selectedFreezeAudio ? selectedAudioAnnotationId : selectedAnnotationId,
+					e.shiftKey,
+					holdExpanded,
+					(id) => {
+						if (audioAnnotationClips.some((clip) => clip.id === id)) {
+							onSelectAudioAnnotation?.(id);
+							onSelectAnnotation?.(null);
+						} else {
+							onSelectAnnotation?.(id);
+							onSelectAudioAnnotation?.(null);
+						}
+					},
+				);
+
+			const cycleAnnotation = () =>
+				cycleOverlappingSelection(
+					annotationAtPlayhead,
+					selectedAnnotationId,
+					e.shiftKey,
+					annotationExpanded,
+					(id) => onSelectAnnotation?.(id),
+				);
+
+			if (onHoldTrack && holdAtPlayhead.length > 0) {
+				e.preventDefault();
+				cycleHold();
+				return;
+			}
+
+			if (annotationAtPlayhead.length > 0) {
+				e.preventDefault();
+				cycleAnnotation();
+				return;
+			}
+
+			if (holdAtPlayhead.length > 0) {
+				e.preventDefault();
+				cycleHold();
+			}
+		},
+		[
+			timelinePlayheadMs,
+			holdTabSpanItems,
+			annotationTabSpanItems,
+			annotationRegions,
+			audioAnnotationClips,
+			selectedAnnotationId,
+			selectedAudioAnnotationId,
+			holdTabLayoutOptions,
+			expandedClustersByTrack,
+			onSelectAnnotation,
+			onSelectAudioAnnotation,
+		],
+	);
+
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -1438,23 +1968,7 @@ export default function TimelineEditor({
 			}
 
 			if (timelineReadOnly) {
-				if (e.key === "Tab" && annotationRegions.length > 0) {
-					const overlapping = annotationRegions
-						.filter((a) => currentTimeMs >= a.startMs && currentTimeMs <= a.endMs)
-						.sort((a, b) => a.zIndex - b.zIndex);
-					if (overlapping.length > 0) {
-						e.preventDefault();
-						if (!selectedAnnotationId || !overlapping.some((a) => a.id === selectedAnnotationId)) {
-							onSelectAnnotation?.(overlapping[0].id);
-						} else {
-							const currentIndex = overlapping.findIndex((a) => a.id === selectedAnnotationId);
-							const nextIndex = e.shiftKey
-								? (currentIndex - 1 + overlapping.length) % overlapping.length
-								: (currentIndex + 1) % overlapping.length;
-							onSelectAnnotation?.(overlapping[nextIndex].id);
-						}
-					}
-				}
+				handleTabCycle(e);
 				return;
 			}
 
@@ -1477,26 +1991,9 @@ export default function TimelineEditor({
 				handleAddSpeed();
 			}
 
-			// Tab cycles through overlapping annotations at the current time
-			if (e.key === "Tab" && annotationRegions.length > 0) {
-				const overlapping = annotationRegions
-					.filter((a) => currentTimeMs >= a.startMs && currentTimeMs <= a.endMs)
-					.sort((a, b) => a.zIndex - b.zIndex);
+			// Tab cycles through overlapping items at the playhead (same lane when expanded)
+			handleTabCycle(e);
 
-				if (overlapping.length > 0) {
-					e.preventDefault();
-
-					if (!selectedAnnotationId || !overlapping.some((a) => a.id === selectedAnnotationId)) {
-						onSelectAnnotation?.(overlapping[0].id);
-					} else {
-						const currentIndex = overlapping.findIndex((a) => a.id === selectedAnnotationId);
-						const nextIndex = e.shiftKey
-							? (currentIndex - 1 + overlapping.length) % overlapping.length // Shift+Tab steps backward
-							: (currentIndex + 1) % overlapping.length;
-						onSelectAnnotation?.(overlapping[nextIndex].id);
-					}
-				}
-			}
 			// Delete key or Ctrl+D / Cmd+D
 			if (
 				e.key === "Delete" ||
@@ -1542,9 +2039,7 @@ export default function TimelineEditor({
 		selectedAudioAnnotationId,
 		selectedBlurId,
 		selectedSpeedId,
-		annotationRegions,
-		currentTimeMs,
-		onSelectAnnotation,
+		handleTabCycle,
 		keyShortcuts,
 		isMac,
 		timelineReadOnly,
@@ -1670,6 +2165,7 @@ export default function TimelineEditor({
 					id: region.id,
 					rowId: HOLD_ROW_ID,
 					span: { start: span.start, end: span.end },
+					sourceStartMs: region.startMs,
 					label,
 					variant: "hold" as const,
 				};
@@ -1683,6 +2179,7 @@ export default function TimelineEditor({
 					id: clip.id,
 					rowId: HOLD_ROW_ID,
 					span: { start: span.start, end: span.end },
+					sourceStartMs: clip.anchorMs,
 					label: clip.fileName
 						? clip.fileName.length > 20
 							? `${clip.fileName.substring(0, 20)}...`
@@ -1967,6 +2464,12 @@ export default function TimelineEditor({
 				<div className="hidden md:flex items-center gap-3 text-[10px] text-slate-500 font-medium">
 					<span className="flex items-center gap-1.5">
 						<kbd className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[#34B27B] font-sans">
+							{scrollLabels.scroll}
+						</kbd>
+						<span>{t("labels.scrollVertical")}</span>
+					</span>
+					<span className="flex items-center gap-1.5">
+						<kbd className="px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[#34B27B] font-sans">
 							{scrollLabels.pan}
 						</kbd>
 						<span>{t("labels.pan")}</span>
@@ -2010,7 +2513,11 @@ export default function TimelineEditor({
 						items={timelineItems}
 						videoDurationMs={totalMs}
 						currentTimeMs={timelinePlayheadMs}
+						minVisibleRangeMs={timelineScale.minVisibleRangeMs}
+						timelineScrollRef={timelineContainerRef}
 						timelineReadOnly={timelineReadOnly}
+						expandedClustersByTrack={expandedClustersByTrack}
+						onToggleClusterExpand={toggleClusterExpand}
 						onSeek={handleAxisSeek}
 						onRangeChange={setRange}
 						onSelectZoom={onSelectZoom}
