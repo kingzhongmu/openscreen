@@ -1,9 +1,11 @@
 import type {
 	AnnotationRegion,
 	AudioAnnotationClip,
+	HoldCollection,
 	HoldRegion,
 } from "@/components/video-editor/types";
 import { MAX_HOLD_DURATION_MS, MIN_HOLD_DURATION_MS } from "@/components/video-editor/types";
+import { syncHoldRegionsFromHoldCollections } from "@/lib/holdCollection";
 
 /** Snap freeze anchors to a sibling freeze start when dragged within this distance. */
 export const FREEZE_ANCHOR_SNAP_THRESHOLD_MS = 150;
@@ -178,25 +180,49 @@ export function syncHoldRegionsFromEditor(
 	annotations: AnnotationRegion[],
 	audioClips: AudioAnnotationClip[],
 	existingHoldRegions: HoldRegion[],
+	holdCollections: HoldCollection[] = [],
 ): HoldRegion[] {
+	const collectionShellIds = new Set(
+		holdCollections.map((collection) => collection.shellAnnotationId).filter(Boolean),
+	);
+	const collectionSourceMs = new Set(holdCollections.map((collection) => collection.sourceMs));
+
+	let holds = syncHoldRegionsFromHoldCollections(holdCollections, existingHoldRegions);
+
+	const collectionIds = new Set(holdCollections.map((collection) => collection.id));
 	const linkedIds = new Set<string>([
-		...annotations.filter((annotation) => annotation.freezeDuringAnnotation).map((a) => a.id),
-		...audioClips.filter((clip) => clip.freezeDuringAnnotation).map((clip) => clip.id),
+		...annotations
+			.filter(
+				(annotation) => annotation.freezeDuringAnnotation && !collectionShellIds.has(annotation.id),
+			)
+			.map((a) => a.id),
+		...audioClips
+			.filter((clip) => clip.freezeDuringAnnotation && !collectionShellIds.has(clip.id))
+			.map((clip) => clip.id),
 	]);
 
-	let holds = existingHoldRegions.filter(
-		(hold) => !hold.linkedAnnotationId || linkedIds.has(hold.linkedAnnotationId),
+	holds = holds.filter(
+		(hold) =>
+			(hold.linkedCollectionId && collectionIds.has(hold.linkedCollectionId)) ||
+			!hold.linkedAnnotationId ||
+			linkedIds.has(hold.linkedAnnotationId),
 	);
 
 	for (const annotation of annotations) {
-		if (!annotation.freezeDuringAnnotation) {
+		if (!annotation.freezeDuringAnnotation || collectionShellIds.has(annotation.id)) {
+			continue;
+		}
+		if (collectionSourceMs.has(annotation.startMs)) {
 			continue;
 		}
 		holds = upsertHoldForAnnotation(holds, annotation);
 	}
 
 	for (const clip of audioClips) {
-		if (!clip.freezeDuringAnnotation) {
+		if (!clip.freezeDuringAnnotation || collectionShellIds.has(clip.id)) {
+			continue;
+		}
+		if (collectionSourceMs.has(clip.anchorMs)) {
 			continue;
 		}
 		holds = upsertHoldForAudioClip(holds, clip);

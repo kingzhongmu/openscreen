@@ -3,6 +3,11 @@ import { normalizePersistedAudioUrl } from "@/lib/audioAnnotationPersistence";
 import { normalizeBlurColor, normalizeBlurType } from "@/lib/blurEffects";
 import { normalizeCursorThemeId } from "@/lib/cursor/cursorThemes";
 import type { ExportFormat, ExportQuality, GifFrameRate, GifSizePreset } from "@/lib/exporter";
+import {
+	migrateFreezeAnnotationsToHoldCollections,
+	normalizeHoldCollection,
+	syncShellAnnotationsFromHoldCollections,
+} from "@/lib/holdCollection";
 import { alignAllFreezeAnchors, syncHoldRegionsFromEditor } from "@/lib/holdRegions";
 import type { ProjectMedia } from "@/lib/recordingSession";
 import { normalizeProjectMedia } from "@/lib/recordingSession";
@@ -34,6 +39,7 @@ import {
 	DEFAULT_WEBCAM_REACTIVE_ZOOM,
 	DEFAULT_ZOOM_DEPTH,
 	DEFAULT_ZOOM_MOTION_BLUR,
+	type HoldCollection,
 	type HoldRegion,
 	MAX_BLUR_BLOCK_SIZE,
 	MAX_BLUR_INTENSITY,
@@ -69,7 +75,7 @@ function normalizeWallpaperValue(value: string): string {
 	return CANONICAL_WALLPAPERS.has(canonical) ? canonical : DEFAULT_WALLPAPER;
 }
 
-export const PROJECT_VERSION = 4;
+export const PROJECT_VERSION = 5;
 
 export interface ProjectEditorState {
 	wallpaper: string;
@@ -88,6 +94,7 @@ export interface ProjectEditorState {
 	annotationRegions: AnnotationRegion[];
 	audioAnnotationClips: AudioAnnotationClip[];
 	holdRegions: HoldRegion[];
+	holdCollections: HoldCollection[];
 	aspectRatio: AspectRatio;
 	webcamLayoutPreset: WebcamLayoutPreset;
 	webcamMaskShape: WebcamMaskShape;
@@ -487,8 +494,33 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 	const { annotations: alignedAnnotationRegions, audioClips: alignedAudioAnnotationClips } =
 		alignAllFreezeAnchors(normalizedAnnotationRegions, normalizedAudioAnnotationClips);
 
+	const parsedHoldCollections: HoldCollection[] = Array.isArray(editor.holdCollections)
+		? editor.holdCollections
+				.map((collection) => normalizeHoldCollection(collection as HoldCollection))
+				.filter((collection): collection is HoldCollection => collection !== null)
+		: [];
+
+	let holdCollections: HoldCollection[];
+	let finalAnnotationRegions: AnnotationRegion[];
+
+	if (parsedHoldCollections.length > 0) {
+		holdCollections = parsedHoldCollections;
+		finalAnnotationRegions = syncShellAnnotationsFromHoldCollections(
+			alignedAnnotationRegions,
+			holdCollections,
+			new Set(alignedAudioAnnotationClips.map((clip) => clip.id)),
+		);
+	} else {
+		const migrated = migrateFreezeAnnotationsToHoldCollections(
+			alignedAnnotationRegions,
+			alignedAudioAnnotationClips,
+		);
+		holdCollections = migrated.holdCollections;
+		finalAnnotationRegions = migrated.annotationRegions;
+	}
+
 	const normalizedHoldRegions: HoldRegion[] = syncHoldRegionsFromEditor(
-		alignedAnnotationRegions,
+		finalAnnotationRegions,
 		alignedAudioAnnotationClips,
 		Array.isArray(editor.holdRegions)
 			? editor.holdRegions
@@ -509,9 +541,12 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 							holdDurationMs,
 							linkedAnnotationId:
 								typeof hold.linkedAnnotationId === "string" ? hold.linkedAnnotationId : undefined,
+							linkedCollectionId:
+								typeof hold.linkedCollectionId === "string" ? hold.linkedCollectionId : undefined,
 						};
 					})
 			: [],
+		holdCollections,
 	);
 
 	const rawCropX = isFiniteNumber(editor.cropRegion?.x)
@@ -577,9 +612,10 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 		autoFocusAll: typeof editor.autoFocusAll === "boolean" ? editor.autoFocusAll : false,
 		trimRegions: normalizedTrimRegions,
 		speedRegions: normalizedSpeedRegions,
-		annotationRegions: alignedAnnotationRegions,
+		annotationRegions: finalAnnotationRegions,
 		audioAnnotationClips: alignedAudioAnnotationClips,
 		holdRegions: normalizedHoldRegions,
+		holdCollections,
 		aspectRatio: normalizedAspectRatio,
 		webcamLayoutPreset: normalizedWebcamLayoutPreset,
 		webcamMaskShape:
@@ -624,12 +660,12 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 
 export function createProjectData(
 	media: ProjectMedia,
-	editor: ProjectEditorState,
+	editor: Partial<ProjectEditorState>,
 ): EditorProjectData {
 	return {
 		version: PROJECT_VERSION,
 		media,
-		editor,
+		editor: normalizeProjectEditor(editor),
 	};
 }
 

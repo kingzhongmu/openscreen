@@ -316,6 +316,35 @@ export interface HoldRegion {
 	sourceMs: number;
 	holdDurationMs: number;
 	linkedAnnotationId?: string;
+	/** When set, this hold is owned by a HoldCollection (Phase 10). */
+	linkedCollectionId?: string;
+}
+
+/** Default duration for the first segment when creating a new hold collection. */
+export const DEFAULT_HOLD_COLLECTION_FIRST_SEGMENT_MS = 10_000;
+
+/** Default duration when appending a segment to an existing hold collection. */
+export const DEFAULT_HOLD_COLLECTION_APPEND_SEGMENT_MS = 3000;
+
+/** Segment content without timeline anchor fields (stored inside a hold collection). */
+export type HoldCollectionSegmentContent = Omit<
+	AnnotationRegion,
+	"id" | "startMs" | "endMs" | "freezeDuringAnnotation" | "holdDurationMs"
+>;
+
+export interface HoldCollectionSegment {
+	id: string;
+	durationMs: number;
+	content: HoldCollectionSegmentContent;
+}
+
+/** Serial freeze steps at one source anchor; insert duration = sum(segment.durationMs). */
+export interface HoldCollection {
+	id: string;
+	sourceMs: number;
+	segments: HoldCollectionSegment[];
+	/** Shell row on the hold track; typically the first segment's linked annotation id. */
+	shellAnnotationId?: string;
 }
 
 export const MIN_HOLD_DURATION_MS = 500;

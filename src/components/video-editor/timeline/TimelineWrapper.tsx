@@ -21,6 +21,8 @@ interface TimelineWrapperProps {
 	minVisibleRangeMs: number;
 	gridSizeMs?: number;
 	readOnly?: boolean;
+	/** When global readOnly is true, still allow drag/resize for matching item ids (hold segments in preview). */
+	isItemEditable?: (id: string) => boolean;
 	onItemSpanChange: (id: string, span: Span) => void;
 	// Hard overlap constraints (zoom/trim/speed), used by clampToNeighbours and as snap targets.
 	allRegionSpans?: { id: string; start: number; end: number }[];
@@ -103,8 +105,14 @@ export default function TimelineWrapper({
 	currentTimeMs,
 	keyframeTimesMs = [],
 	readOnly = false,
+	isItemEditable,
 }: TimelineWrapperProps) {
 	const totalMs = Math.max(0, Math.round(videoDuration * 1000));
+
+	const canEditItem = useCallback(
+		(id: string) => !readOnly || Boolean(isItemEditable?.(id)),
+		[readOnly, isItemEditable],
+	);
 
 	const clampSpanToBounds = useCallback(
 		(span: Span): Span => {
@@ -330,11 +338,10 @@ export default function TimelineWrapper({
 
 	const onResizeEnd = useCallback(
 		(event: ResizeEndEvent) => {
-			if (readOnly) return;
+			const activeItemId = event.active.id as string;
+			if (!canEditItem(activeItemId)) return;
 			const updatedSpan = event.active.data.current.getSpanFromResizeEvent?.(event);
 			if (!updatedSpan) return;
-
-			const activeItemId = event.active.id as string;
 			let clampedSpan = clampSpanToBounds(updatedSpan);
 
 			const mode = inferResizeMode(activeItemId, clampedSpan);
@@ -368,18 +375,17 @@ export default function TimelineWrapper({
 			onItemSpanChange,
 			snapSpanToTargets,
 			totalMs,
-			readOnly,
+			canEditItem,
 		],
 	);
 
 	const onDragEnd = useCallback(
 		(event: DragEndEvent) => {
-			if (readOnly) return;
+			const activeItemId = event.active.id as string;
+			if (!canEditItem(activeItemId)) return;
 			const activeRowId = event.over?.id as string;
 			const updatedSpan = event.active.data.current.getSpanFromDragEvent?.(event);
 			if (!updatedSpan || !activeRowId) return;
-
-			const activeItemId = event.active.id as string;
 			let clampedSpan = clampSpanToBounds(updatedSpan);
 
 			clampedSpan = snapSpanToTargets(clampedSpan, activeItemId, "drag").span;
@@ -399,8 +405,8 @@ export default function TimelineWrapper({
 			clampToNeighbours,
 			hasOverlap,
 			onItemSpanChange,
-			readOnly,
 			snapSpanToTargets,
+			canEditItem,
 		],
 	);
 

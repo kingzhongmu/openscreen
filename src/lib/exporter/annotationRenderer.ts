@@ -8,6 +8,7 @@ import {
 import {
 	type AnnotationRegion,
 	type FigureData,
+	type HoldCollection,
 	type HoldRegion,
 } from "@/components/video-editor/types";
 import { resolveAnnotationAnimationTimeMs } from "@/components/video-editor/videoPlayback/holdPlayback";
@@ -20,6 +21,8 @@ import {
 	getNormalizedMosaicBlockSize,
 	normalizeBlurType,
 } from "@/lib/blurEffects";
+import { holdCollectionSegmentToOutputSpan } from "@/lib/holdCollection";
+import { buildHoldCollectionOverlayAnnotations } from "@/lib/holdCollectionTimeline";
 import {
 	isFreezeLinkedRegionVisibleAtOutputTime,
 	isRegionVisibleAtOutputTime,
@@ -446,14 +449,38 @@ export async function renderAnnotations(
 	scaleFactor: number = 1.0,
 	options?: {
 		holdRegions?: HoldRegion[];
+		holdCollections?: HoldCollection[];
 		outputTimeMs?: number;
 	},
 ): Promise<void> {
 	const holdRegions = options?.holdRegions ?? [];
+	const holdCollections = options?.holdCollections ?? [];
 	const outputTimeMs = options?.outputTimeMs ?? currentTimeMs;
-	const activeAnnotations = annotations.filter((ann) => {
+	const collectionShellIds = new Set(
+		holdCollections.map((collection) => collection.shellAnnotationId).filter(Boolean) as string[],
+	);
+
+	const baseAnnotations = annotations.filter(
+		(ann) => !(holdRegions.length > 0 && collectionShellIds.has(ann.id)),
+	);
+
+	const holdCollectionOverlays =
+		holdRegions.length > 0 && holdCollections.length > 0
+			? buildHoldCollectionOverlayAnnotations(holdCollections, holdRegions, outputTimeMs)
+			: [];
+
+	const mergedAnnotations = [...baseAnnotations, ...holdCollectionOverlays];
+
+	const segmentIds = new Set(
+		holdCollections.flatMap((collection) => collection.segments.map((segment) => segment.id)),
+	);
+
+	const activeAnnotations = mergedAnnotations.filter((ann) => {
 		if (holdRegions.length === 0) {
 			return currentTimeMs >= ann.startMs && currentTimeMs < ann.endMs;
+		}
+		if (segmentIds.has(ann.id)) {
+			return outputTimeMs >= ann.startMs && outputTimeMs < ann.endMs;
 		}
 		if (ann.freezeDuringAnnotation) {
 			return isFreezeLinkedRegionVisibleAtOutputTime(
@@ -466,14 +493,23 @@ export async function renderAnnotations(
 		return isRegionVisibleAtOutputTime(outputTimeMs, ann.startMs, ann.endMs, holdRegions);
 	});
 
+	function resolveSegmentAnimationTimeMs(annotation: AnnotationRegion): number {
+		for (const collection of holdCollections) {
+			const segmentIndex = collection.segments.findIndex((segment) => segment.id === annotation.id);
+			if (segmentIndex >= 0) {
+				const span = holdCollectionSegmentToOutputSpan(collection, segmentIndex, holdRegions);
+				return outputTimeMs - span.start;
+			}
+		}
+		return resolveAnnotationAnimationTimeMs(outputTimeMs, annotation.startMs, holdRegions);
+	}
+
 	// Lower z-index first so higher draws on top
 	const sortedAnnotations = [...activeAnnotations].sort((a, b) => a.zIndex - b.zIndex);
 
 	for (const annotation of sortedAnnotations) {
 		const animationTimeMs =
-			holdRegions.length > 0
-				? resolveAnnotationAnimationTimeMs(outputTimeMs, annotation.startMs, holdRegions)
-				: currentTimeMs;
+			holdRegions.length > 0 ? resolveSegmentAnimationTimeMs(annotation) : currentTimeMs;
 		const x = (annotation.position.x / 100) * canvasWidth;
 		const y = (annotation.position.y / 100) * canvasHeight;
 		const width = (annotation.size.width / 100) * canvasWidth;

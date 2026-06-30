@@ -40,6 +40,10 @@ import {
 	resolveNativeCursorRenderAsset,
 } from "@/lib/cursor/nativeCursor";
 import {
+	buildHoldCollectionOverlayAnnotations,
+	buildHoldCollectionSourceOverlayAnnotations,
+} from "@/lib/holdCollectionTimeline";
+import {
 	isFreezeLinkedRegionVisibleAtOutputTime,
 	isOutputTimeInHold,
 	isRegionVisibleAtOutputTime,
@@ -133,11 +137,14 @@ interface VideoPlaybackProps {
 	trimRegions?: TrimRegion[];
 	speedRegions?: SpeedRegion[];
 	holdRegions?: import("./types").HoldRegion[];
+	holdCollections?: import("./types").HoldCollection[];
 	aspectRatio: AspectRatio;
 	cursorRecordingData?: CursorRecordingData | null;
 	annotationRegions?: AnnotationRegion[];
 	audioAnnotationClips?: import("./types").AudioAnnotationClip[];
 	selectedAnnotationId?: string | null;
+	selectedHoldSegmentKey?: string | null;
+	onSelectHoldSegment?: (collectionId: string, segmentId: string) => void;
 	onSelectAnnotation?: (id: string | null) => void;
 	onAnnotationPositionChange?: (id: string, position: { x: number; y: number }) => void;
 	onAnnotationSizeChange?: (id: string, size: { width: number; height: number }) => void;
@@ -265,11 +272,14 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			trimRegions = [],
 			speedRegions = [],
 			holdRegions = [],
+			holdCollections = [],
 			aspectRatio,
 			cursorRecordingData,
 			annotationRegions = [],
 			audioAnnotationClips = [],
 			selectedAnnotationId,
+			selectedHoldSegmentKey = null,
+			onSelectHoldSegment,
 			onSelectAnnotation,
 			onAnnotationPositionChange,
 			onAnnotationSizeChange,
@@ -2148,12 +2158,22 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 									return isRegionVisibleAtOutputTime(outputMs, startMs, endMs, holdRegions);
 								};
 
+								const collectionShellIds = new Set(
+									holdCollections
+										.map((collection) => collection.shellAnnotationId)
+										.filter(Boolean) as string[],
+								);
+
 								const filteredAnnotations = (annotationRegions || []).filter((annotation) => {
 									if (
 										typeof annotation.startMs !== "number" ||
 										typeof annotation.endMs !== "number"
 									)
 										return false;
+
+									if (collectionShellIds.has(annotation.id)) {
+										return false;
+									}
 
 									if (annotation.id === selectedAnnotationId) return true;
 
@@ -2163,6 +2183,25 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 										annotation.freezeDuringAnnotation,
 									);
 								});
+
+								const selectedSegmentId = selectedHoldSegmentKey?.split(":")[1] ?? null;
+
+								const holdCollectionOverlays = useOutputVisibility
+									? holdCollections.length > 0
+										? buildHoldCollectionOverlayAnnotations(
+												holdCollections,
+												holdRegions,
+												outputMs,
+												new Set(selectedSegmentId ? [selectedSegmentId] : []),
+											)
+										: []
+									: holdCollections.length > 0
+										? buildHoldCollectionSourceOverlayAnnotations(
+												holdCollections,
+												sourceMs,
+												new Set(selectedSegmentId ? [selectedSegmentId] : []),
+											)
+										: [];
 
 								const filteredBlurRegions = (blurRegions || []).filter((blurRegion) => {
 									if (
@@ -2178,6 +2217,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 								const sorted = [
 									...filteredAnnotations.map((annotation) => ({
+										kind: "annotation" as const,
+										region: annotation,
+									})),
+									...holdCollectionOverlays.map((annotation) => ({
 										kind: "annotation" as const,
 										region: annotation,
 									})),
@@ -2199,8 +2242,22 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 											})()
 										: null;
 
+								const findHoldCollectionForSegment = (segmentId: string) => {
+									for (const collection of holdCollections) {
+										if (collection.segments.some((segment) => segment.id === segmentId)) {
+											return collection;
+										}
+									}
+									return null;
+								};
+
 								// Re-clicking a selected annotation cycles through any overlapping ones.
 								const handleAnnotationClick = (clickedId: string) => {
+									const ownerCollection = findHoldCollectionForSegment(clickedId);
+									if (ownerCollection && onSelectHoldSegment) {
+										onSelectHoldSegment(ownerCollection.id, clickedId);
+										return;
+									}
 									if (!onSelectAnnotation) return;
 
 									if (clickedId === selectedAnnotationId && filteredAnnotations.length > 1) {
@@ -2235,7 +2292,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 										isSelected={
 											item.kind === "blur"
 												? item.region.id === selectedBlurId
-												: item.region.id === selectedAnnotationId
+												: selectedSegmentId
+													? item.region.id === selectedSegmentId
+													: item.region.id === selectedAnnotationId
 										}
 										containerWidth={overlaySize.width}
 										containerHeight={overlaySize.height}
@@ -2265,7 +2324,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 										isSelectedBoost={
 											item.kind === "blur"
 												? item.region.id === selectedBlurId
-												: item.region.id === selectedAnnotationId
+												: selectedSegmentId
+													? item.region.id === selectedSegmentId
+													: item.region.id === selectedAnnotationId
 										}
 										previewSourceCanvas={previewSnapshotCanvas}
 										previewFrameVersion={useOutputVisibility ? outputMs : sourceMs}

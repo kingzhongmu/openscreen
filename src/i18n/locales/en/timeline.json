@@ -18,7 +18,8 @@
 		"pressAudioAnnotation": "Import audio at playhead",
 		"pressBlur": "Press B to add blur region",
 		"pressSpeed": "Press S to add speed",
-		"holdSegments": "Freeze-frame annotations (source timeline)"
+		"holdSegments": "Freeze holds; multi-step collections are serial blocks on one lane",
+		"holdCollectionSegments": "Hold collection steps (preview timeline)"
 	},
 	"laneExpand": {
 		"expandHold": "Expand overlapping freeze items at playhead into separate lanes",
@@ -46,7 +47,8 @@
 		"blurItem": "Blur {{index}}",
 		"imageItem": "Image",
 		"emptyText": "Empty text",
-		"holdSegment": "Freeze"
+		"holdSegment": "Freeze",
+		"holdCollectionStep": "Step {{index}}"
 	},
 	"emptyState": {
 		"noVideo": "No Video Loaded",

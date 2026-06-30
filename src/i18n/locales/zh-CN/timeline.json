@@ -14,7 +14,8 @@
 		"pressAudioAnnotation": "在播放头处导入音频",
 		"pressSpeed": "按 S 添加速度",
 		"pressBlur": "按 B 添加模糊区域",
-		"holdSegments": "定帧批注（源视频时间轴）"
+		"holdSegments": "定帧批注；多步骤集合在同轨按顺序排列",
+		"holdCollectionSegments": "定帧集合步骤（预览时间轴）"
 	},
 	"laneExpand": {
 		"expandHold": "展开播放头处重叠的定帧条到多轨",
@@ -42,7 +43,8 @@
 		"imageItem": "图片",
 		"emptyText": "空文本",
 		"blurItem": "模糊 {{index}}",
-		"holdSegment": "定帧"
+		"holdSegment": "定帧",
+		"holdCollectionStep": "步骤 {{index}}"
 	},
 	"emptyState": {
 		"noVideo": "未加载视频",

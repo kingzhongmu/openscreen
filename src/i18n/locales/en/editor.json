@@ -83,7 +83,8 @@
 		"typeText": "Text",
 		"typeArrow": "Arrow",
 		"typeImage": "Image",
-		"typeAudio": "Audio Narration"
+		"typeAudio": "Audio Narration",
+		"typeFreezeText": "Freeze-frame text"
 	},
 	"audioAnnotation": {
 		"invalidFileType": "Please upload an MP3 or WAV file.",

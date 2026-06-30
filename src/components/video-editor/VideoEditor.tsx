@@ -66,6 +66,24 @@ import {
 	VideoExporter,
 } from "@/lib/exporter";
 import { computeFrameStepTime } from "@/lib/frameStep";
+import {
+	annotationRegionToHoldCollection,
+	appendHoldCollectionSegment,
+	applyShellAnnotationEditsToCollection,
+	createHoldCollection,
+	DEFAULT_HOLD_COLLECTION_FIRST_SEGMENT_MS,
+	findHoldCollectionByShellId,
+	removeHoldCollectionsByShellId,
+	setHoldCollectionFirstSegmentDuration,
+	syncShellAnnotationsFromHoldCollections,
+} from "@/lib/holdCollection";
+import {
+	removeHoldCollectionSegment,
+	setHoldCollectionSegmentDuration,
+	setHoldCollectionSegmentPairDurations,
+	setHoldCollectionTotalDuration,
+	updateHoldCollectionSegmentContent,
+} from "@/lib/holdCollectionTimeline";
 import { alignAllFreezeAnchors, syncHoldRegionsFromEditor } from "@/lib/holdRegions";
 import type { CursorCaptureMode, ProjectMedia } from "@/lib/recordingSession";
 import { matchesShortcut } from "@/lib/shortcuts";
@@ -201,22 +219,58 @@ const CAPTION_WORD_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
 function withSyncedHoldRegions(
 	prev: EditorState,
-	updates: Partial<Pick<EditorState, "annotationRegions" | "audioAnnotationClips">>,
+	updates: Partial<
+		Pick<EditorState, "annotationRegions" | "audioAnnotationClips" | "holdCollections">
+	>,
 ): Partial<EditorState> {
+	const holdCollections = updates.holdCollections ?? prev.holdCollections ?? [];
 	const rawAnnotations = updates.annotationRegions ?? prev.annotationRegions;
 	const rawClips = updates.audioAnnotationClips ?? prev.audioAnnotationClips;
-	const { annotations: annotationRegions, audioClips: audioAnnotationClips } =
-		alignAllFreezeAnchors(rawAnnotations, rawClips);
+	const audioClipIds = new Set(rawClips.map((clip) => clip.id));
+	const annotationRegions = syncShellAnnotationsFromHoldCollections(
+		rawAnnotations,
+		holdCollections,
+		audioClipIds,
+	);
+	const { annotations: alignedAnnotations, audioClips: audioAnnotationClips } =
+		alignAllFreezeAnchors(annotationRegions, rawClips);
 	return {
 		...updates,
-		annotationRegions,
+		holdCollections,
+		annotationRegions: alignedAnnotations,
 		audioAnnotationClips,
 		holdRegions: syncHoldRegionsFromEditor(
-			annotationRegions,
+			alignedAnnotations,
 			audioAnnotationClips,
 			prev.holdRegions,
+			holdCollections,
 		),
 	};
+}
+
+function syncHoldCollectionShellEdit(
+	prev: EditorState,
+	shellId: string,
+	patchRegion: (region: AnnotationRegion) => AnnotationRegion,
+): Partial<EditorState> {
+	const collection = findHoldCollectionByShellId(prev.holdCollections, shellId);
+	if (!collection) {
+		return {
+			annotationRegions: prev.annotationRegions.map((region) =>
+				region.id === shellId ? patchRegion(region) : region,
+			),
+		};
+	}
+	const region = prev.annotationRegions.find((entry) => entry.id === shellId);
+	if (!region) {
+		return {};
+	}
+	const updatedCollection = applyShellAnnotationEditsToCollection(collection, patchRegion(region));
+	return withSyncedHoldRegions(prev, {
+		holdCollections: (prev.holdCollections ?? []).map((entry) =>
+			entry.id === collection.id ? updatedCollection : entry,
+		),
+	});
 }
 
 export default function VideoEditor() {
@@ -239,6 +293,7 @@ export default function VideoEditor() {
 		annotationRegions,
 		audioAnnotationClips,
 		holdRegions,
+		holdCollections,
 		cropRegion,
 		wallpaper,
 		shadowIntensity,
@@ -278,6 +333,7 @@ export default function VideoEditor() {
 	const [selectedTrimId, setSelectedTrimId] = useState<string | null>(null);
 	const [selectedSpeedId, setSelectedSpeedId] = useState<string | null>(null);
 	const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+	const [selectedHoldSegmentKey, setSelectedHoldSegmentKey] = useState<string | null>(null);
 	const [selectedAudioAnnotationId, setSelectedAudioAnnotationId] = useState<string | null>(null);
 	const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
 	const [isExporting, setIsExporting] = useState(false);
@@ -469,6 +525,7 @@ export default function VideoEditor() {
 					path,
 				),
 				holdRegions: normalizedEditor.holdRegions,
+				holdCollections: normalizedEditor.holdCollections,
 				aspectRatio: normalizedEditor.aspectRatio,
 				webcamLayoutPreset: normalizedEditor.webcamLayoutPreset,
 				webcamMaskShape: normalizedEditor.webcamMaskShape,
@@ -553,6 +610,7 @@ export default function VideoEditor() {
 			annotationRegions,
 			audioAnnotationClips,
 			holdRegions,
+			holdCollections,
 			aspectRatio,
 			webcamLayoutPreset,
 			webcamMaskShape,
@@ -586,6 +644,7 @@ export default function VideoEditor() {
 		annotationRegions,
 		audioAnnotationClips,
 		holdRegions,
+		holdCollections,
 		aspectRatio,
 		webcamLayoutPreset,
 		webcamMaskShape,
@@ -727,6 +786,7 @@ export default function VideoEditor() {
 				annotationRegions,
 				audioAnnotationClips,
 				holdRegions,
+				holdCollections,
 				aspectRatio,
 				webcamLayoutPreset,
 				webcamMaskShape,
@@ -806,6 +866,7 @@ export default function VideoEditor() {
 			annotationRegions,
 			audioAnnotationClips,
 			holdRegions,
+			holdCollections,
 			aspectRatio,
 			webcamLayoutPreset,
 			webcamMaskShape,
@@ -1145,9 +1206,20 @@ export default function VideoEditor() {
 			setSelectedAnnotationId(item.kind === "annotation" ? item.id : null);
 			setSelectedBlurId(item.kind === "blur" ? item.id : null);
 			setSelectedAudioAnnotationId(item.kind === "audio" ? item.id : null);
+			setSelectedHoldSegmentKey(null);
 		},
 		[],
 	);
+
+	const handleSelectHoldSegment = useCallback((collectionId: string, segmentId: string) => {
+		setSelectedHoldSegmentKey(`${collectionId}:${segmentId}`);
+		setSelectedZoomId(null);
+		setSelectedTrimId(null);
+		setSelectedSpeedId(null);
+		setSelectedAnnotationId(null);
+		setSelectedBlurId(null);
+		setSelectedAudioAnnotationId(null);
+	}, []);
 
 	const handleSelectZoom = useCallback(
 		(id: string | null) => {
@@ -1173,6 +1245,7 @@ export default function VideoEditor() {
 
 	const handleSelectAnnotation = useCallback(
 		(id: string | null) => {
+			setSelectedHoldSegmentKey(null);
 			if (id) {
 				selectTimelineItem({ kind: "annotation", id });
 			} else {
@@ -1527,7 +1600,12 @@ export default function VideoEditor() {
 	const handlePositionAnnotationAdded = useCallback(
 		(
 			type: AnnotationRegion["type"],
-			options?: { anchorMs?: number; durationMs?: number; pausePlayback?: boolean },
+			options?: {
+				anchorMs?: number;
+				durationMs?: number;
+				pausePlayback?: boolean;
+				freeze?: boolean;
+			},
 		) => {
 			const totalMs = Math.round(durationRef.current * 1000);
 			if (totalMs <= 0) {
@@ -1535,6 +1613,27 @@ export default function VideoEditor() {
 			}
 
 			const anchorMs = options?.anchorMs ?? Math.round(currentTime * 1000);
+
+			if (options?.freeze) {
+				const id = `annotation-${nextAnnotationIdRef.current++}`;
+				const collection = createHoldCollection(anchorMs, {
+					type,
+					firstSegmentDurationMs: options.durationMs ?? DEFAULT_HOLD_COLLECTION_FIRST_SEGMENT_MS,
+				});
+				collection.shellAnnotationId = id;
+
+				pushState((prev) =>
+					withSyncedHoldRegions(prev, {
+						holdCollections: [...(prev.holdCollections ?? []), collection],
+					}),
+				);
+				selectTimelineItem({ kind: "annotation", id });
+				if (options?.pausePlayback !== false) {
+					setIsPlaying(false);
+				}
+				return;
+			}
+
 			const span = computePositionAnnotationSpan(
 				anchorMs,
 				options?.durationMs ?? DEFAULT_POSITION_ANNOTATION_DURATION_MS,
@@ -1568,8 +1667,8 @@ export default function VideoEditor() {
 	);
 
 	const handleAnnotationAdded = useCallback(
-		(type: AnnotationRegion["type"] = "text") => {
-			handlePositionAnnotationAdded(type);
+		(type: AnnotationRegion["type"] = "text", options?: { freeze?: boolean }) => {
+			handlePositionAnnotationAdded(type, options);
 		},
 		[handlePositionAnnotationAdded],
 	);
@@ -1578,7 +1677,24 @@ export default function VideoEditor() {
 		(id: string, span: Span) => {
 			const startMs = Math.round(span.start);
 			const endMs = Math.max(startMs + MIN_POSITION_ANNOTATION_DURATION_MS, Math.round(span.end));
+			const durationMs = endMs - startMs;
 			pushState((prev) => {
+				const collection = findHoldCollectionByShellId(prev.holdCollections, id);
+				if (collection) {
+					const updated =
+						collection.segments.length === 1
+							? setHoldCollectionFirstSegmentDuration(
+									{ ...collection, sourceMs: startMs },
+									durationMs,
+								)
+							: setHoldCollectionTotalDuration({ ...collection, sourceMs: startMs }, durationMs);
+					return withSyncedHoldRegions(prev, {
+						holdCollections: (prev.holdCollections ?? []).map((entry) =>
+							entry.id === collection.id ? updated : entry,
+						),
+					});
+				}
+
 				const editedAutoCaption =
 					prev.annotationRegions.find((region) => region.id === id)?.annotationSource ===
 					"auto-caption";
@@ -1603,6 +1719,19 @@ export default function VideoEditor() {
 		(id: string, durationMs: number) => {
 			const totalMs = Math.round(durationRef.current * 1000);
 			pushState((prev) => {
+				const collection = findHoldCollectionByShellId(prev.holdCollections, id);
+				if (collection) {
+					const updated =
+						collection.segments.length === 1
+							? setHoldCollectionFirstSegmentDuration(collection, durationMs)
+							: setHoldCollectionTotalDuration(collection, durationMs);
+					return withSyncedHoldRegions(prev, {
+						holdCollections: (prev.holdCollections ?? []).map((entry) =>
+							entry.id === collection.id ? updated : entry,
+						),
+					});
+				}
+
 				const source = prev.annotationRegions.find((region) => region.id === id);
 				if (!source) {
 					return {};
@@ -1629,17 +1758,53 @@ export default function VideoEditor() {
 	const handleAnnotationFreezeChange = useCallback(
 		(id: string, enabled: boolean) => {
 			pushState((prev) => {
-				const next = prev.annotationRegions.map((region) => {
-					if (region.id !== id) {
-						return region;
+				if (enabled) {
+					const region = prev.annotationRegions.find((entry) => entry.id === id);
+					if (!region || region.freezeDuringAnnotation) {
+						return prev;
 					}
-					if (enabled) {
-						return { ...region, freezeDuringAnnotation: true as const };
+					const existing = prev.holdCollections?.find(
+						(collection) => collection.shellAnnotationId === id,
+					);
+					if (existing) {
+						return prev;
 					}
+					const collection =
+						annotationRegionToHoldCollection({ ...region, freezeDuringAnnotation: true }) ??
+						createHoldCollection(region.startMs, {
+							firstSegmentDurationMs: Math.max(500, region.endMs - region.startMs),
+						});
+					collection.shellAnnotationId = id;
 					const { freezeDuringAnnotation: _freeze, holdDurationMs: _hold, ...rest } = region;
+					const nextAnnotations = prev.annotationRegions.map((entry) =>
+						entry.id === id ? rest : entry,
+					);
+					return withSyncedHoldRegions(prev, {
+						annotationRegions: nextAnnotations,
+						holdCollections: [...(prev.holdCollections ?? []), collection],
+					});
+				}
+
+				const collection = (prev.holdCollections ?? []).find(
+					(entry) => entry.shellAnnotationId === id,
+				);
+				const nextCollections = (prev.holdCollections ?? []).filter(
+					(entry) => entry.shellAnnotationId !== id,
+				);
+				const nextAnnotations = prev.annotationRegions.map((entry) => {
+					if (entry.id !== id) {
+						return entry;
+					}
+					const { freezeDuringAnnotation: _freeze, holdDurationMs: _hold, ...rest } = entry;
 					return rest;
 				});
-				return withSyncedHoldRegions(prev, { annotationRegions: next });
+				if (!collection) {
+					return withSyncedHoldRegions(prev, { annotationRegions: nextAnnotations });
+				}
+				return withSyncedHoldRegions(prev, {
+					annotationRegions: nextAnnotations,
+					holdCollections: nextCollections,
+				});
 			});
 		},
 		[pushState],
@@ -1742,20 +1907,55 @@ export default function VideoEditor() {
 
 	const handleAudioAnnotationFreezeChange = useCallback(
 		(id: string, enabled: boolean) => {
-			pushState((prev) =>
-				withSyncedHoldRegions(prev, {
-					audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
-						if (clip.id !== id) {
-							return clip;
+			pushState((prev) => {
+				const clip = prev.audioAnnotationClips.find((entry) => entry.id === id);
+				if (!clip) {
+					return prev;
+				}
+
+				if (enabled) {
+					if (clip.freezeDuringAnnotation) {
+						return prev;
+					}
+					const existing = prev.holdCollections?.find(
+						(collection) => collection.shellAnnotationId === id,
+					);
+					const durationMs = Math.max(500, clip.durationMs);
+					const collection =
+						existing ??
+						(() => {
+							const created = createHoldCollection(clip.anchorMs, {
+								firstSegmentDurationMs: durationMs,
+							});
+							created.shellAnnotationId = id;
+							created.segments[0]!.durationMs = durationMs;
+							return created;
+						})();
+
+					return withSyncedHoldRegions(prev, {
+						audioAnnotationClips: prev.audioAnnotationClips.map((entry) =>
+							entry.id === id ? { ...entry, freezeDuringAnnotation: true as const } : entry,
+						),
+						holdCollections: existing
+							? (prev.holdCollections ?? [])
+							: [...(prev.holdCollections ?? []), collection],
+					});
+				}
+
+				const nextCollections = (prev.holdCollections ?? []).filter(
+					(entry) => entry.shellAnnotationId !== id,
+				);
+				return withSyncedHoldRegions(prev, {
+					audioAnnotationClips: prev.audioAnnotationClips.map((entry) => {
+						if (entry.id !== id) {
+							return entry;
 						}
-						if (enabled) {
-							return { ...clip, freezeDuringAnnotation: true as const };
-						}
-						const { freezeDuringAnnotation: _freeze, holdDurationMs: _hold, ...rest } = clip;
+						const { freezeDuringAnnotation: _freeze, holdDurationMs: _hold, ...rest } = entry;
 						return rest;
 					}),
-				}),
-			);
+					holdCollections: nextCollections,
+				});
+			});
 		},
 		[pushState],
 	);
@@ -1805,6 +2005,7 @@ export default function VideoEditor() {
 			pushState((prev) =>
 				withSyncedHoldRegions(prev, {
 					audioAnnotationClips: prev.audioAnnotationClips.filter((clip) => clip.id !== id),
+					holdCollections: removeHoldCollectionsByShellId(prev.holdCollections ?? [], id),
 				}),
 			);
 			if (selectedAudioAnnotationId === id) {
@@ -1854,11 +2055,208 @@ export default function VideoEditor() {
 		[pushState, selectTimelineItem],
 	);
 
+	const updateHoldCollectionById = useCallback(
+		(
+			prev: EditorState,
+			collectionId: string,
+			updater: (collection: import("./types").HoldCollection) => import("./types").HoldCollection,
+		) => {
+			const nextCollections = (prev.holdCollections ?? []).map((collection) =>
+				collection.id === collectionId ? updater(collection) : collection,
+			);
+			return withSyncedHoldRegions(prev, { holdCollections: nextCollections });
+		},
+		[],
+	);
+
+	const handleHoldSegmentDurationChange = useCallback(
+		(collectionId: string, segmentId: string, durationMs: number) => {
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) =>
+					setHoldCollectionSegmentDuration(collection, segmentId, durationMs),
+				),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldSegmentPairDurationChange = useCallback(
+		(
+			collectionId: string,
+			leftSegmentId: string,
+			leftDurationMs: number,
+			rightSegmentId: string,
+			rightDurationMs: number,
+		) => {
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) =>
+					setHoldCollectionSegmentPairDurations(
+						collection,
+						leftSegmentId,
+						leftDurationMs,
+						rightSegmentId,
+						rightDurationMs,
+					),
+				),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldCollectionTotalDurationChange = useCallback(
+		(shellAnnotationId: string, durationMs: number) => {
+			pushState((prev) => {
+				const collection = findHoldCollectionByShellId(prev.holdCollections, shellAnnotationId);
+				if (!collection) {
+					return prev;
+				}
+				const updated = setHoldCollectionTotalDuration(collection, durationMs);
+				return withSyncedHoldRegions(prev, {
+					holdCollections: (prev.holdCollections ?? []).map((entry) =>
+						entry.id === collection.id ? updated : entry,
+					),
+				});
+			});
+		},
+		[pushState],
+	);
+
+	const handleHoldCollectionAppendSegment = useCallback(
+		(collectionId: string, type: AnnotationRegion["type"] = "text") => {
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) =>
+					appendHoldCollectionSegment(collection, type),
+				),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldSegmentContentChange = useCallback(
+		(collectionId: string, segmentId: string, content: string) => {
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) =>
+					updateHoldCollectionSegmentContent(collection, segmentId, (segmentContent) => {
+						if (segmentContent.type === "text") {
+							return { ...segmentContent, content, textContent: content };
+						}
+						if (segmentContent.type === "image") {
+							return { ...segmentContent, content, imageContent: content };
+						}
+						return { ...segmentContent, content };
+					}),
+				),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldSegmentStyleChange = useCallback(
+		(collectionId: string, segmentId: string, style: Partial<AnnotationRegion["style"]>) => {
+			saveAnnotationTextStylePreset(style);
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) =>
+					updateHoldCollectionSegmentContent(collection, segmentId, (segmentContent) => ({
+						...segmentContent,
+						style: { ...segmentContent.style, ...style },
+					})),
+				),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldSegmentTypeChange = useCallback(
+		(collectionId: string, segmentId: string, type: AnnotationRegion["type"]) => {
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) =>
+					updateHoldCollectionSegmentContent(collection, segmentId, (segmentContent) => {
+						if (type === "text") {
+							return {
+								...segmentContent,
+								type: "text",
+								content: segmentContent.textContent || "Enter text...",
+							};
+						}
+						if (type === "image") {
+							return {
+								...segmentContent,
+								type: "image",
+								content: segmentContent.imageContent || "",
+							};
+						}
+						if (type === "figure") {
+							return {
+								...segmentContent,
+								type: "figure",
+								content: "",
+								figureData: segmentContent.figureData ?? { ...getAnnotationFigureDataPreset() },
+							};
+						}
+						return { ...segmentContent, type };
+					}),
+				),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldSegmentFigureDataChange = useCallback(
+		(collectionId: string, segmentId: string, figureData: FigureData) => {
+			saveAnnotationFigureDataPreset(figureData);
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) =>
+					updateHoldCollectionSegmentContent(collection, segmentId, (segmentContent) => ({
+						...segmentContent,
+						figureData,
+					})),
+				),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldSegmentDelete = useCallback(
+		(collectionId: string, segmentId: string) => {
+			pushState((prev) => {
+				const collection = (prev.holdCollections ?? []).find((entry) => entry.id === collectionId);
+				if (!collection) {
+					return prev;
+				}
+				const nextCollection = removeHoldCollectionSegment(collection, segmentId);
+				if (!nextCollection) {
+					const shellId = collection.shellAnnotationId;
+					return withSyncedHoldRegions(prev, {
+						annotationRegions: shellId
+							? prev.annotationRegions.filter((region) => region.id !== shellId)
+							: prev.annotationRegions,
+						holdCollections: removeHoldCollectionsByShellId(
+							prev.holdCollections ?? [],
+							shellId ?? "",
+						),
+						audioAnnotationClips: shellId
+							? prev.audioAnnotationClips.filter((clip) => clip.id !== shellId)
+							: prev.audioAnnotationClips,
+					});
+				}
+				return withSyncedHoldRegions(prev, {
+					holdCollections: (prev.holdCollections ?? []).map((entry) =>
+						entry.id === collectionId ? nextCollection : entry,
+					),
+				});
+			});
+			setSelectedHoldSegmentKey(null);
+		},
+		[pushState],
+	);
+
 	const handleAnnotationDelete = useCallback(
 		(id: string) => {
 			pushState((prev) =>
 				withSyncedHoldRegions(prev, {
 					annotationRegions: prev.annotationRegions.filter((r) => r.id !== id),
+					holdCollections: removeHoldCollectionsByShellId(prev.holdCollections ?? [], id),
+					audioAnnotationClips: prev.audioAnnotationClips.filter((clip) => clip.id !== id),
 				}),
 			);
 			if (selectedAnnotationId === id) {
@@ -1867,32 +2265,35 @@ export default function VideoEditor() {
 			if (selectedBlurId === id) {
 				setSelectedBlurId(null);
 			}
+			if (selectedAudioAnnotationId === id) {
+				setSelectedAudioAnnotationId(null);
+			}
+			setSelectedHoldSegmentKey(null);
 		},
-		[selectedAnnotationId, selectedBlurId, pushState],
+		[selectedAnnotationId, selectedBlurId, selectedAudioAnnotationId, pushState],
 	);
 
 	const handleAnnotationContentChange = useCallback(
 		(id: string, content: string) => {
-			pushState((prev) => ({
-				annotationRegions: prev.annotationRegions.map((region) => {
-					if (region.id !== id) return region;
+			pushState((prev) =>
+				syncHoldCollectionShellEdit(prev, id, (region) => {
 					if (region.type === "text") {
 						return { ...region, content, textContent: content };
-					} else if (region.type === "image") {
+					}
+					if (region.type === "image") {
 						return { ...region, content, imageContent: content };
 					}
 					return { ...region, content };
 				}),
-			}));
+			);
 		},
 		[pushState],
 	);
 
 	const handleAnnotationTypeChange = useCallback(
 		(id: string, type: AnnotationRegion["type"]) => {
-			pushState((prev) => ({
-				annotationRegions: prev.annotationRegions.map((region) => {
-					if (region.id !== id) return region;
+			pushState((prev) => {
+				const patched = syncHoldCollectionShellEdit(prev, id, (region) => {
 					const updatedRegion = { ...region, type };
 					if (type === "text") {
 						updatedRegion.content = region.textContent || "Enter text...";
@@ -1910,8 +2311,9 @@ export default function VideoEditor() {
 						}
 					}
 					return updatedRegion;
-				}),
-			}));
+				});
+				return patched;
+			});
 
 			if (type === "blur" && selectedAnnotationId === id) {
 				setSelectedAnnotationId(null);
@@ -1931,14 +2333,19 @@ export default function VideoEditor() {
 			pushState((prev) => {
 				const touched = prev.annotationRegions.find((r) => r.id === id);
 				const syncAutoCaptions = touched?.annotationSource === "auto-caption";
-				return {
-					annotationRegions: prev.annotationRegions.map((region) => {
-						if (syncAutoCaptions && region.annotationSource === "auto-caption") {
-							return { ...region, style: { ...region.style, ...style } };
-						}
-						return region.id === id ? { ...region, style: { ...region.style, ...style } } : region;
-					}),
-				};
+				if (syncAutoCaptions) {
+					return {
+						annotationRegions: prev.annotationRegions.map((region) =>
+							region.annotationSource === "auto-caption"
+								? { ...region, style: { ...region.style, ...style } }
+								: region,
+						),
+					};
+				}
+				return syncHoldCollectionShellEdit(prev, id, (region) => ({
+					...region,
+					style: { ...region.style, ...style },
+				}));
 			});
 		},
 		[pushState],
@@ -1947,11 +2354,9 @@ export default function VideoEditor() {
 	const handleAnnotationFigureDataChange = useCallback(
 		(id: string, figureData: FigureData) => {
 			saveAnnotationFigureDataPreset(figureData);
-			pushState((prev) => ({
-				annotationRegions: prev.annotationRegions.map((region) =>
-					region.id === id ? { ...region, figureData } : region,
-				),
-			}));
+			pushState((prev) =>
+				syncHoldCollectionShellEdit(prev, id, (region) => ({ ...region, figureData })),
+			);
 		},
 		[pushState],
 	);
@@ -2004,6 +2409,21 @@ export default function VideoEditor() {
 	const handleAnnotationPositionChange = useCallback(
 		(id: string, position: { x: number; y: number }) => {
 			pushState((prev) => {
+				const owningCollection = (prev.holdCollections ?? []).find((collection) =>
+					collection.segments.some((segment) => segment.id === id),
+				);
+				if (owningCollection) {
+					const updated = updateHoldCollectionSegmentContent(owningCollection, id, (content) => ({
+						...content,
+						position,
+					}));
+					return withSyncedHoldRegions(prev, {
+						holdCollections: (prev.holdCollections ?? []).map((entry) =>
+							entry.id === owningCollection.id ? updated : entry,
+						),
+					});
+				}
+
 				const moved = prev.annotationRegions.find((r) => r.id === id);
 				const syncAutoCaptions = moved?.annotationSource === "auto-caption";
 				return {
@@ -2022,6 +2442,21 @@ export default function VideoEditor() {
 	const handleAnnotationSizeChange = useCallback(
 		(id: string, size: { width: number; height: number }) => {
 			pushState((prev) => {
+				const owningCollection = (prev.holdCollections ?? []).find((collection) =>
+					collection.segments.some((segment) => segment.id === id),
+				);
+				if (owningCollection) {
+					const updated = updateHoldCollectionSegmentContent(owningCollection, id, (content) => ({
+						...content,
+						size,
+					}));
+					return withSyncedHoldRegions(prev, {
+						holdCollections: (prev.holdCollections ?? []).map((entry) =>
+							entry.id === owningCollection.id ? updated : entry,
+						),
+					});
+				}
+
 				const resized = prev.annotationRegions.find((r) => r.id === id);
 				const syncAutoCaptions = resized?.annotationSource === "auto-caption";
 				return {
@@ -2039,11 +2474,28 @@ export default function VideoEditor() {
 
 	const handleAnnotationImageScaleModeChange = useCallback(
 		(id: string, mode: "contain" | "fill") => {
-			pushState((prev) => ({
-				annotationRegions: prev.annotationRegions.map((region) =>
-					region.id === id ? { ...region, imageScaleMode: mode } : region,
-				),
-			}));
+			pushState((prev) => {
+				const owningCollection = (prev.holdCollections ?? []).find((collection) =>
+					collection.segments.some((segment) => segment.id === id),
+				);
+				if (owningCollection) {
+					const updated = updateHoldCollectionSegmentContent(owningCollection, id, (content) => ({
+						...content,
+						imageScaleMode: mode,
+					}));
+					return withSyncedHoldRegions(prev, {
+						holdCollections: (prev.holdCollections ?? []).map((entry) =>
+							entry.id === owningCollection.id ? updated : entry,
+						),
+					});
+				}
+
+				return {
+					annotationRegions: prev.annotationRegions.map((region) =>
+						region.id === id ? { ...region, imageScaleMode: mode } : region,
+					),
+				};
+			});
 		},
 		[pushState],
 	);
@@ -2413,6 +2865,7 @@ export default function VideoEditor() {
 						annotationRegions,
 						audioAnnotationClips,
 						holdRegions,
+						holdCollections,
 						webcamLayoutPreset,
 						webcamMaskShape,
 						webcamMirrored,
@@ -2536,6 +2989,7 @@ export default function VideoEditor() {
 			cursorClipToBounds,
 			cursorTheme,
 			t,
+			holdCollections,
 		],
 	);
 
@@ -3039,10 +3493,13 @@ export default function VideoEditor() {
 													trimRegions={trimRegions}
 													speedRegions={speedRegions}
 													holdRegions={holdRegions}
+													holdCollections={holdCollections}
 													annotationRegions={annotationOnlyRegions}
 													audioAnnotationClips={audioAnnotationClips}
 													selectedAnnotationId={selectedAnnotationId}
+													selectedHoldSegmentKey={selectedHoldSegmentKey}
 													onSelectAnnotation={handleSelectAnnotation}
+													onSelectHoldSegment={handleSelectHoldSegment}
 													onAnnotationPositionChange={handleAnnotationPositionChange}
 													onAnnotationSizeChange={handleAnnotationSizeChange}
 													onAnnotationImageScaleModeChange={handleAnnotationImageScaleModeChange}
@@ -3082,7 +3539,9 @@ export default function VideoEditor() {
 											</div>
 											<AddPositionAnnotationMenu
 												disabled={!videoPath || duration <= 0}
-												onAdd={({ type }) => handlePositionAnnotationAdded(type)}
+												onAdd={({ type, freeze }) =>
+													handlePositionAnnotationAdded(type, { freeze })
+												}
 												onImportAudio={handleAudioImportRequest}
 											/>
 											<input
@@ -3228,6 +3687,17 @@ export default function VideoEditor() {
 										}}
 										selectedAnnotationId={selectedAnnotationId}
 										annotationRegions={annotationOnlyRegions}
+										holdCollections={holdCollections}
+										selectedHoldSegmentKey={selectedHoldSegmentKey}
+										onSelectHoldSegment={handleSelectHoldSegment}
+										onHoldCollectionAppendSegment={handleHoldCollectionAppendSegment}
+										onHoldSegmentDurationChange={handleHoldSegmentDurationChange}
+										onHoldSegmentContentChange={handleHoldSegmentContentChange}
+										onHoldSegmentTypeChange={handleHoldSegmentTypeChange}
+										onHoldSegmentStyleChange={handleHoldSegmentStyleChange}
+										onHoldSegmentFigureDataChange={handleHoldSegmentFigureDataChange}
+										onHoldSegmentDelete={handleHoldSegmentDelete}
+										holdRegions={holdRegions}
 										onAnnotationContentChange={handleAnnotationContentChange}
 										onAnnotationTypeChange={handleAnnotationTypeChange}
 										onAnnotationStyleChange={handleAnnotationStyleChange}
@@ -3301,6 +3771,13 @@ export default function VideoEditor() {
 									onPlaybackModeChange={handlePlaybackModeChange}
 									timelineReadOnly={timelineReadOnly}
 									holdRegions={holdRegions}
+									holdCollections={holdCollections}
+									selectedHoldSegmentKey={selectedHoldSegmentKey}
+									onSelectHoldSegment={handleSelectHoldSegment}
+									onHoldSegmentDurationChange={handleHoldSegmentDurationChange}
+									onHoldSegmentPairDurationChange={handleHoldSegmentPairDurationChange}
+									onHoldSegmentDelete={handleHoldSegmentDelete}
+									onHoldCollectionTotalDurationChange={handleHoldCollectionTotalDurationChange}
 									onSeek={handleTimelineSeek}
 									zoomRegions={zoomRegions}
 									onZoomAdded={handleZoomAdded}

@@ -103,6 +103,7 @@ interface FrameRenderConfig {
 	webcamPosition?: { cx: number; cy: number } | null;
 	annotationRegions?: AnnotationRegion[];
 	holdRegions?: import("@/components/video-editor/types").HoldRegion[];
+	holdCollections?: import("@/components/video-editor/types").HoldCollection[];
 	speedRegions?: SpeedRegion[];
 	previewWidth?: number;
 	previewHeight?: number;
@@ -471,6 +472,7 @@ export class FrameRenderer {
 				this.config.holdRegions?.length
 					? {
 							holdRegions: this.config.holdRegions,
+							holdCollections: this.config.holdCollections,
 							outputTimeMs: annotationOutputTimeMs ?? timeMs,
 						}
 					: undefined,

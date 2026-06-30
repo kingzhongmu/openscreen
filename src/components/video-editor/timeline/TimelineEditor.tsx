@@ -32,6 +32,8 @@ import {
 import { useScopedT } from "@/contexts/I18nContext";
 import { useShortcuts } from "@/contexts/ShortcutsContext";
 import { useAudioPeaks } from "@/hooks/useAudioPeaks";
+import { findHoldCollectionByShellId } from "@/lib/holdCollection";
+import { holdCollectionShellLabel, parseHoldSegmentTimelineId } from "@/lib/holdCollectionTimeline";
 import { FREEZE_ANCHOR_SNAP_THRESHOLD_MS } from "@/lib/holdRegions";
 import {
 	getPlayheadExpandCluster,
@@ -58,12 +60,15 @@ import type {
 	AnnotationType,
 	AudioAnnotationClip,
 	EditorPlaybackMode,
+	HoldCollection,
+	HoldCollectionSegmentContent,
 	HoldRegion,
 	SpeedRegion,
 	TrimRegion,
 	ZoomRegion,
 } from "../types";
 import BackgroundWaveform from "./BackgroundWaveform";
+import HoldCollectionTimelineItem from "./HoldCollectionTimelineItem";
 import Item from "./Item";
 import KeyframeMarkers from "./KeyframeMarkers";
 import Row from "./Row";
@@ -101,6 +106,23 @@ interface TimelineEditorProps {
 	onPlaybackModeChange?: (mode: EditorPlaybackMode) => void;
 	timelineReadOnly?: boolean;
 	holdRegions?: HoldRegion[];
+	holdCollections?: HoldCollection[];
+	selectedHoldSegmentKey?: string | null;
+	onSelectHoldSegment?: (collectionId: string, segmentId: string) => void;
+	onHoldSegmentDurationChange?: (
+		collectionId: string,
+		segmentId: string,
+		durationMs: number,
+	) => void;
+	onHoldSegmentPairDurationChange?: (
+		collectionId: string,
+		leftSegmentId: string,
+		leftDurationMs: number,
+		rightSegmentId: string,
+		rightDurationMs: number,
+	) => void;
+	onHoldSegmentDelete?: (collectionId: string, segmentId: string) => void;
+	onHoldCollectionTotalDurationChange?: (shellAnnotationId: string, durationMs: number) => void;
 	onSeek?: (time: number) => void;
 	zoomRegions: ZoomRegion[];
 	onZoomAdded: (span: Span) => void;
@@ -121,7 +143,7 @@ interface TimelineEditorProps {
 	selectedTrimId?: string | null;
 	onSelectTrim?: (id: string | null) => void;
 	annotationRegions?: AnnotationRegion[];
-	onAnnotationAdded?: (type: AnnotationType) => void;
+	onAnnotationAdded?: (type: AnnotationType, options?: { freeze?: boolean }) => void;
 	onAnnotationSpanChange?: (id: string, span: Span) => void;
 	onAnnotationDelete?: (id: string) => void;
 	selectedAnnotationId?: string | null;
@@ -803,6 +825,11 @@ function Timeline({
 	keyframes = [],
 	videoUrl,
 	showTrimWaveform = false,
+	holdCollections = [],
+	selectedHoldSegmentKey = null,
+	onSelectHoldSegment,
+	onHoldSegmentDurationChange,
+	onHoldSegmentPairDurationChange,
 }: {
 	items: TimelineRenderItem[];
 	videoDurationMs: number;
@@ -829,6 +856,21 @@ function Timeline({
 	keyframes?: { id: string; time: number }[];
 	videoUrl?: string;
 	showTrimWaveform?: boolean;
+	holdCollections?: HoldCollection[];
+	selectedHoldSegmentKey?: string | null;
+	onSelectHoldSegment?: (collectionId: string, segmentId: string) => void;
+	onHoldSegmentDurationChange?: (
+		collectionId: string,
+		segmentId: string,
+		durationMs: number,
+	) => void;
+	onHoldSegmentPairDurationChange?: (
+		collectionId: string,
+		leftSegmentId: string,
+		leftDurationMs: number,
+		rightSegmentId: string,
+		rightDurationMs: number,
+	) => void;
 }) {
 	const t = useScopedT("timeline");
 	const { setTimelineRef, style, sidebarWidth, range, pixelsToValue } = useTimelineContext();
@@ -1126,6 +1168,24 @@ function Timeline({
 		holdPlayheadCluster && expandedClustersByTrack[HOLD_ROW_ID] === holdPlayheadCluster.id,
 	);
 
+	const labelHoldSegmentContent = useCallback(
+		(content: HoldCollectionSegmentContent, index: number): string => {
+			if (content.type === "text") {
+				const preview = content.content?.trim() || content.textContent?.trim() || "";
+				return preview
+					? preview.length > 16
+						? `${preview.slice(0, 16)}…`
+						: preview
+					: t("labels.holdCollectionStep", { index: String(index + 1) });
+			}
+			if (content.type === "image") {
+				return t("labels.imageItem");
+			}
+			return t("labels.holdCollectionStep", { index: String(index + 1) });
+		},
+		[t],
+	);
+
 	const annotationPlayheadCluster = useMemo(
 		() => getPlayheadExpandCluster(annotationSpanItems, currentTimeMs, ANNOTATION_ROW_ID),
 		[annotationSpanItems, currentTimeMs],
@@ -1224,6 +1284,29 @@ function Timeline({
 						holdIsClusterExpanded ? t("laneExpand.collapseHold") : t("laneExpand.expandHold")
 					}
 					renderItem={(item, rowId) => {
+						const collection = findHoldCollectionByShellId(holdCollections, item.id);
+						if (collection) {
+							return (
+								<HoldCollectionTimelineItem
+									key={item.id}
+									id={item.id}
+									span={item.span}
+									rowId={rowId}
+									collection={collection}
+									labelForSegment={(index) =>
+										labelHoldSegmentContent(collection.segments[index]!.content, index)
+									}
+									isCollectionSelected={item.id === selectedAnnotationId}
+									selectedHoldSegmentKey={selectedHoldSegmentKey}
+									onSelectCollection={() => onSelectAnnotation?.(item.id)}
+									onSelectSegment={onSelectHoldSegment}
+									onSegmentDurationChange={onHoldSegmentDurationChange}
+									onSegmentPairDurationChange={onHoldSegmentPairDurationChange}
+									readOnly={false}
+								/>
+							);
+						}
+
 						const isAudio = item.variant === "audio";
 						return (
 							<Item
@@ -1347,6 +1430,13 @@ export default function TimelineEditor({
 	onPlaybackModeChange,
 	timelineReadOnly = false,
 	holdRegions = [],
+	holdCollections = [],
+	selectedHoldSegmentKey = null,
+	onSelectHoldSegment,
+	onHoldSegmentDurationChange,
+	onHoldSegmentPairDurationChange,
+	onHoldSegmentDelete,
+	onHoldCollectionTotalDurationChange,
 	onSeek,
 	zoomRegions,
 	onZoomAdded,
@@ -1546,6 +1636,28 @@ export default function TimelineEditor({
 		onBlurDelete(selectedBlurId);
 		onSelectBlur(null);
 	}, [selectedBlurId, onBlurDelete, onSelectBlur]);
+
+	const deleteSelectedHoldSegment = useCallback(() => {
+		if (!selectedHoldSegmentKey) {
+			return;
+		}
+		const [collectionId, segmentId] = selectedHoldSegmentKey.split(":");
+		if (!collectionId || !segmentId) {
+			return;
+		}
+		const collection = holdCollections.find((entry) => entry.id === collectionId);
+		if (!collection) {
+			return;
+		}
+		if (collection.segments.length <= 1) {
+			const shellId = collection.shellAnnotationId;
+			if (shellId && onAnnotationDelete) {
+				onAnnotationDelete(shellId);
+			}
+			return;
+		}
+		onHoldSegmentDelete?.(collectionId, segmentId);
+	}, [selectedHoldSegmentKey, onAnnotationDelete, onHoldSegmentDelete, holdCollections]);
 
 	const deleteSelectedSpeed = useCallback(() => {
 		if (!selectedSpeedId || !onSpeedDelete || !onSelectSpeed) return;
@@ -1797,11 +1909,11 @@ export default function TimelineEditor({
 	]);
 
 	const handleAddAnnotation = useCallback(
-		(type: AnnotationType = "text") => {
+		(type: AnnotationType = "text", options?: { freeze?: boolean }) => {
 			if (!videoDuration || videoDuration === 0 || totalMs === 0 || !onAnnotationAdded) {
 				return;
 			}
-			onAnnotationAdded(type);
+			onAnnotationAdded(type, options);
 		},
 		[videoDuration, totalMs, onAnnotationAdded],
 	);
@@ -1988,7 +2100,10 @@ export default function TimelineEditor({
 			if (matchesShortcut(e, keyShortcuts.addTrim, isMac)) {
 				handleAddTrim();
 			}
-			if (matchesShortcut(e, keyShortcuts.addAnnotation, isMac)) {
+			if (e.shiftKey && e.key.toLowerCase() === "a" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+				e.preventDefault();
+				handleAddAnnotation("text", { freeze: true });
+			} else if (matchesShortcut(e, keyShortcuts.addAnnotation, isMac)) {
 				handleAddAnnotation("text");
 			}
 			if (BLUR_REGIONS_ENABLED && matchesShortcut(e, keyShortcuts.addBlur, isMac)) {
@@ -2013,6 +2128,8 @@ export default function TimelineEditor({
 					deleteSelectedZoom();
 				} else if (selectedTrimId) {
 					deleteSelectedTrim();
+				} else if (selectedHoldSegmentKey) {
+					deleteSelectedHoldSegment();
 				} else if (selectedAnnotationId) {
 					deleteSelectedAnnotation();
 				} else if (selectedAudioAnnotationId) {
@@ -2038,7 +2155,9 @@ export default function TimelineEditor({
 		deleteSelectedAnnotation,
 		deleteSelectedAudioAnnotation,
 		deleteSelectedBlur,
+		deleteSelectedHoldSegment,
 		deleteSelectedSpeed,
+		selectedHoldSegmentKey,
 		selectedKeyframeId,
 		selectedZoomId,
 		selectedTrimId,
@@ -2153,12 +2272,40 @@ export default function TimelineEditor({
 			};
 		});
 
+		const freezeAudioAnnotations: TimelineRenderItem[] = audioAnnotationClips
+			.filter((clip) => clip.freezeDuringAnnotation)
+			.map((clip, index) => {
+				const span = mapFreezeSpanToTimeline(clip.anchorMs, clip.anchorMs + clip.durationMs);
+				return {
+					id: clip.id,
+					rowId: HOLD_ROW_ID,
+					span: { start: span.start, end: span.end },
+					sourceStartMs: clip.anchorMs,
+					label: clip.fileName
+						? clip.fileName.length > 20
+							? `${clip.fileName.substring(0, 20)}...`
+							: clip.fileName
+						: t("labels.audioAnnotationItem", { index: String(index + 1) }),
+					variant: "audio",
+				};
+			});
+		const freezeAudioIds = new Set(freezeAudioAnnotations.map((item) => item.id));
+
 		const freezeAnnotations: TimelineRenderItem[] = annotationRegions
-			.filter((region) => region.freezeDuringAnnotation)
+			.filter((region) => region.freezeDuringAnnotation && !freezeAudioIds.has(region.id))
 			.map((region) => {
+				const collection = findHoldCollectionByShellId(holdCollections, region.id);
 				let label: string;
 
-				if (region.type === "text") {
+				if (collection) {
+					const sourceLabel =
+						region.type === "text"
+							? region.content.trim() || t("labels.emptyText")
+							: region.type === "image"
+								? t("labels.imageItem")
+								: t("labels.annotationItem");
+					label = holdCollectionShellLabel(collection, holdRegions, sourceLabel);
+				} else if (region.type === "text") {
 					const preview = region.content.trim() || t("labels.emptyText");
 					label = preview.length > 20 ? `${preview.substring(0, 20)}...` : preview;
 				} else if (region.type === "image") {
@@ -2178,23 +2325,6 @@ export default function TimelineEditor({
 				};
 			});
 
-		const freezeAudioAnnotations: TimelineRenderItem[] = audioAnnotationClips
-			.filter((clip) => clip.freezeDuringAnnotation)
-			.map((clip, index) => {
-				const span = mapFreezeSpanToTimeline(clip.anchorMs, clip.anchorMs + clip.durationMs);
-				return {
-					id: clip.id,
-					rowId: HOLD_ROW_ID,
-					span: { start: span.start, end: span.end },
-					sourceStartMs: clip.anchorMs,
-					label: clip.fileName
-						? clip.fileName.length > 20
-							? `${clip.fileName.substring(0, 20)}...`
-							: clip.fileName
-						: t("labels.audioAnnotationItem", { index: String(index + 1) }),
-					variant: "audio",
-				};
-			});
 		return [
 			...zooms,
 			...trims,
@@ -2214,6 +2344,8 @@ export default function TimelineEditor({
 		speedRegions,
 		mapSpanToTimeline,
 		mapFreezeSpanToTimeline,
+		holdCollections,
+		holdRegions,
 		t,
 	]);
 
@@ -2263,11 +2395,38 @@ export default function TimelineEditor({
 
 	const keyframeTimesMs = useMemo(() => keyframes.map((kf) => kf.time), [keyframes]);
 
+	const collectionShellIds = useMemo(
+		() =>
+			new Set(
+				holdCollections
+					.map((collection) => collection.shellAnnotationId)
+					.filter(Boolean) as string[],
+			),
+		[holdCollections],
+	);
+
 	const handleItemSpanChange = useCallback(
 		(id: string, span: Span) => {
-			if (timelineReadOnly) {
+			const parsedHoldSegment = parseHoldSegmentTimelineId(id);
+			if (parsedHoldSegment && onHoldSegmentDurationChange) {
+				const durationMs = Math.max(500, Math.round(span.end - span.start));
+				onHoldSegmentDurationChange(
+					parsedHoldSegment.collectionId,
+					parsedHoldSegment.segmentId,
+					durationMs,
+				);
 				return;
 			}
+
+			if (timelineReadOnly) {
+				const collection = findHoldCollectionByShellId(holdCollections, id);
+				if (collection && onHoldCollectionTotalDurationChange) {
+					const durationMs = Math.max(500, Math.round(span.end - span.start));
+					onHoldCollectionTotalDurationChange(id, durationMs);
+				}
+				return;
+			}
+
 			const sourceSpan = toSourceSpanFromTimeline(id, span);
 
 			if (zoomRegions.some((r) => r.id === id)) {
@@ -2299,6 +2458,9 @@ export default function TimelineEditor({
 			onAudioAnnotationSpanChange,
 			onBlurSpanChange,
 			timelineReadOnly,
+			onHoldSegmentDurationChange,
+			onHoldCollectionTotalDurationChange,
+			holdCollections,
 		],
 	);
 
@@ -2375,7 +2537,7 @@ export default function TimelineEditor({
 					<AddPositionAnnotationMenu
 						disabled={timelineReadOnly || !videoDuration || videoDuration === 0}
 						variant="icon"
-						onAdd={({ type }) => handleAddAnnotation(type)}
+						onAdd={({ type, freeze }) => handleAddAnnotation(type, { freeze })}
 						onImportAudio={onImportAudio}
 					/>
 					<Button
@@ -2507,6 +2669,7 @@ export default function TimelineEditor({
 					currentTimeMs={timelinePlayheadMs}
 					keyframeTimesMs={keyframeTimesMs}
 					readOnly={timelineReadOnly}
+					isItemEditable={(id) => collectionShellIds.has(id)}
 				>
 					<KeyframeMarkers
 						keyframes={keyframes}
@@ -2542,6 +2705,11 @@ export default function TimelineEditor({
 						keyframes={keyframes}
 						videoUrl={videoUrl}
 						showTrimWaveform={showTrimWaveform && !usesOutputTimelineAxis}
+						holdCollections={holdCollections}
+						selectedHoldSegmentKey={selectedHoldSegmentKey}
+						onSelectHoldSegment={onSelectHoldSegment}
+						onHoldSegmentDurationChange={onHoldSegmentDurationChange}
+						onHoldSegmentPairDurationChange={onHoldSegmentPairDurationChange}
 					/>
 				</TimelineWrapper>
 			</div>

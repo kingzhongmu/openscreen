@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AnnotationRegion, AudioAnnotationClip } from "@/components/video-editor/types";
+import { createHoldCollection } from "@/lib/holdCollection";
 import {
 	alignAllFreezeAnchors,
 	resolveNearEndFreezeAnchorMs,
@@ -66,5 +67,23 @@ describe("holdRegions", () => {
 			start: 2000,
 			end: 15_600,
 		});
+	});
+
+	it("keeps hold regions when freeze is backed by a hold collection shell", () => {
+		const collection = createHoldCollection(2324, { firstSegmentDurationMs: 3000 });
+		collection.id = "collection-1";
+		collection.shellAnnotationId = "annotation-1";
+		const shell: AnnotationRegion = {
+			...textFreeze,
+			id: "annotation-1",
+			startMs: 2324,
+			endMs: 5324,
+		};
+		const holdRegions = syncHoldRegionsFromEditor([shell], [], [], [collection]);
+
+		expect(holdRegions).toHaveLength(1);
+		expect(holdRegions[0]?.sourceMs).toBe(2324);
+		expect(holdRegions[0]?.holdDurationMs).toBe(3000);
+		expect(holdRegions[0]?.linkedCollectionId).toBe("collection-1");
 	});
 });

@@ -1,4 +1,4 @@
-import { ChevronDown, Image as ImageIcon, MessageSquarePlus, Mic, Type } from "lucide-react";
+import { ChevronDown, Image as ImageIcon, MessageSquarePlus, Mic, Pause, Type } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +14,8 @@ import type { AnnotationType } from "./types";
 
 export interface PositionAnnotationAddRequest {
 	type: AnnotationType;
+	/** Create a hold collection (freeze frame) at the playhead instead of an overlay annotation. */
+	freeze?: boolean;
 }
 
 interface AddPositionAnnotationMenuProps {
@@ -119,6 +121,13 @@ export function AddPositionAnnotationMenu({
 				)}
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="bg-[#1a1a1a] border-white/10 min-w-[180px]">
+				<DropdownMenuItem
+					onClick={() => onAdd({ type: "text", freeze: true })}
+					className="text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer gap-2"
+				>
+					<Pause className="w-4 h-4 text-[#B4A046]" />
+					<span>{t("positionAnnotation.typeFreezeText")}</span>
+				</DropdownMenuItem>
 				{items.map((item) => (
 					<DropdownMenuItem
 						key={item.type}

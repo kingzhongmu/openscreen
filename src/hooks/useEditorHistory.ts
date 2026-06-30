@@ -8,6 +8,7 @@ import type {
 	AnnotationRegion,
 	AudioAnnotationClip,
 	CropRegion,
+	HoldCollection,
 	HoldRegion,
 	SpeedRegion,
 	TrimRegion,
@@ -38,6 +39,7 @@ export interface EditorState {
 	annotationRegions: AnnotationRegion[];
 	audioAnnotationClips: AudioAnnotationClip[];
 	holdRegions: HoldRegion[];
+	holdCollections: HoldCollection[];
 	cropRegion: CropRegion;
 	wallpaper: string;
 	shadowIntensity: number;
@@ -64,6 +66,7 @@ export const INITIAL_EDITOR_STATE: EditorState = {
 	annotationRegions: [],
 	audioAnnotationClips: [],
 	holdRegions: [],
+	holdCollections: [],
 	cropRegion: DEFAULT_CROP_REGION,
 	wallpaper: DEFAULT_EDITOR_LAYOUT_SETTINGS.wallpaper,
 	shadowIntensity: DEFAULT_EDITOR_APPEARANCE_SETTINGS.shadowIntensity,

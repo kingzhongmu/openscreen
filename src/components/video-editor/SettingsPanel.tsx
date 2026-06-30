@@ -51,6 +51,12 @@ import {
 	GIF_FRAME_RATES,
 	GIF_SIZE_PRESETS,
 } from "@/lib/exporter";
+import {
+	findHoldCollectionByShellId,
+	holdCollectionSegmentToOutputSpan,
+	segmentOffsetMs,
+} from "@/lib/holdCollection";
+import { segmentContentToAnnotationRegion } from "@/lib/holdCollectionTimeline";
 import { cn } from "@/lib/utils";
 import { resolveImageWallpaperUrl, WALLPAPER_PATHS } from "@/lib/wallpaper";
 import { type AspectRatio, isPortraitAspectRatio } from "@/utils/aspectRatioUtils";
@@ -79,6 +85,7 @@ import type {
 	BlurData,
 	CropRegion,
 	FigureData,
+	HoldCollection,
 	PlaybackSpeed,
 	Rotation3DPreset,
 	WebcamLayoutPreset,
@@ -306,6 +313,29 @@ interface SettingsPanelProps {
 	onSaveUnsavedExport?: () => void;
 	selectedAnnotationId?: string | null;
 	annotationRegions?: AnnotationRegion[];
+	holdCollections?: HoldCollection[];
+	holdRegions?: import("./types").HoldRegion[];
+	selectedHoldSegmentKey?: string | null;
+	onSelectHoldSegment?: (collectionId: string, segmentId: string) => void;
+	onHoldCollectionAppendSegment?: (collectionId: string) => void;
+	onHoldSegmentDurationChange?: (
+		collectionId: string,
+		segmentId: string,
+		durationMs: number,
+	) => void;
+	onHoldSegmentContentChange?: (collectionId: string, segmentId: string, content: string) => void;
+	onHoldSegmentTypeChange?: (collectionId: string, segmentId: string, type: AnnotationType) => void;
+	onHoldSegmentStyleChange?: (
+		collectionId: string,
+		segmentId: string,
+		style: Partial<AnnotationRegion["style"]>,
+	) => void;
+	onHoldSegmentFigureDataChange?: (
+		collectionId: string,
+		segmentId: string,
+		figureData: FigureData,
+	) => void;
+	onHoldSegmentDelete?: (collectionId: string, segmentId: string) => void;
 	onAnnotationContentChange?: (id: string, content: string) => void;
 	onAnnotationTypeChange?: (id: string, type: AnnotationType) => void;
 	onAnnotationStyleChange?: (id: string, style: Partial<AnnotationRegion["style"]>) => void;
@@ -459,6 +489,17 @@ export function SettingsPanel({
 	onSaveUnsavedExport,
 	selectedAnnotationId,
 	annotationRegions = [],
+	holdCollections = [],
+	holdRegions = [],
+	selectedHoldSegmentKey = null,
+	onSelectHoldSegment,
+	onHoldCollectionAppendSegment,
+	onHoldSegmentDurationChange,
+	onHoldSegmentContentChange,
+	onHoldSegmentTypeChange,
+	onHoldSegmentStyleChange,
+	onHoldSegmentFigureDataChange,
+	onHoldSegmentDelete,
 	onAnnotationContentChange,
 	onAnnotationTypeChange,
 	onAnnotationStyleChange,
@@ -772,6 +813,26 @@ export function SettingsPanel({
 	const selectedAnnotation = selectedAnnotationId
 		? annotationRegions.find((a) => a.id === selectedAnnotationId)
 		: null;
+	const selectedHoldCollection = selectedAnnotationId
+		? findHoldCollectionByShellId(holdCollections, selectedAnnotationId)
+		: undefined;
+	const parsedHoldSegmentKey = selectedHoldSegmentKey?.split(":") ?? [];
+	const selectedHoldSegmentCollection =
+		parsedHoldSegmentKey.length === 2
+			? holdCollections.find((collection) => collection.id === parsedHoldSegmentKey[0])
+			: undefined;
+	const selectedHoldSegment =
+		selectedHoldSegmentCollection && parsedHoldSegmentKey[1]
+			? selectedHoldSegmentCollection.segments.find(
+					(segment) => segment.id === parsedHoldSegmentKey[1],
+				)
+			: undefined;
+	const selectedHoldSegmentIndex =
+		selectedHoldSegmentCollection && selectedHoldSegment
+			? selectedHoldSegmentCollection.segments.findIndex(
+					(segment) => segment.id === selectedHoldSegment.id,
+				)
+			: -1;
 	const selectedAudioAnnotation = selectedAudioAnnotationId
 		? audioAnnotationClips.find((clip) => clip.id === selectedAudioAnnotationId)
 		: null;
@@ -865,6 +926,116 @@ export function SettingsPanel({
 		);
 	}
 
+	if (
+		selectedHoldSegment &&
+		selectedHoldSegmentCollection &&
+		selectedHoldSegmentIndex >= 0 &&
+		(editorReadOnly ? onHoldSegmentDurationChange : onHoldSegmentContentChange)
+	) {
+		const outputSpan = holdCollectionSegmentToOutputSpan(
+			selectedHoldSegmentCollection,
+			selectedHoldSegmentIndex,
+			holdRegions,
+		);
+		const offsetStart = segmentOffsetMs(selectedHoldSegmentCollection, selectedHoldSegmentIndex);
+		const segmentAnnotation = segmentContentToAnnotationRegion(
+			selectedHoldSegment.content,
+			selectedHoldSegment.id,
+			outputSpan.start,
+			outputSpan.end,
+		);
+		const contentReadOnly = editorReadOnly;
+		return (
+			<div className="editor-inspector-shell flex min-w-0 flex-col h-full overflow-hidden">
+				{previewReadOnlyBanner}
+				<div className="min-h-0 flex-1 overflow-hidden">
+					<AnnotationSettingsPanel
+						annotation={segmentAnnotation}
+						holdCollection={selectedHoldSegmentCollection}
+						holdCollectionSegmentIndex={selectedHoldSegmentIndex}
+						contentReadOnly={contentReadOnly}
+						videoDurationMs={videoDurationMs}
+						onContentChange={
+							contentReadOnly
+								? undefined
+								: (content) =>
+										onHoldSegmentContentChange!(
+											selectedHoldSegmentCollection.id,
+											selectedHoldSegment.id,
+											content,
+										)
+						}
+						onTypeChange={
+							contentReadOnly
+								? undefined
+								: (type) =>
+										onHoldSegmentTypeChange?.(
+											selectedHoldSegmentCollection.id,
+											selectedHoldSegment.id,
+											type,
+										)
+						}
+						onStyleChange={
+							contentReadOnly
+								? undefined
+								: (style) =>
+										onHoldSegmentStyleChange?.(
+											selectedHoldSegmentCollection.id,
+											selectedHoldSegment.id,
+											style,
+										)
+						}
+						onDurationChange={
+							onHoldSegmentDurationChange
+								? (durationMs) =>
+										onHoldSegmentDurationChange(
+											selectedHoldSegmentCollection.id,
+											selectedHoldSegment.id,
+											durationMs,
+										)
+								: undefined
+						}
+						onFigureDataChange={
+							contentReadOnly
+								? undefined
+								: onHoldSegmentFigureDataChange
+									? (figureData) =>
+											onHoldSegmentFigureDataChange(
+												selectedHoldSegmentCollection.id,
+												selectedHoldSegment.id,
+												figureData,
+											)
+									: undefined
+						}
+						onDelete={
+							selectedHoldSegmentCollection.shellAnnotationId && onAnnotationDelete
+								? () => onAnnotationDelete(selectedHoldSegmentCollection.shellAnnotationId!)
+								: undefined
+						}
+						onDeleteSegment={
+							!contentReadOnly &&
+							onHoldSegmentDelete &&
+							selectedHoldSegmentCollection.segments.length > 1
+								? () =>
+										onHoldSegmentDelete(selectedHoldSegmentCollection.id, selectedHoldSegment.id)
+								: undefined
+						}
+						onAppendHoldSegment={
+							!contentReadOnly && onHoldCollectionAppendSegment
+								? () => onHoldCollectionAppendSegment(selectedHoldSegmentCollection.id)
+								: undefined
+						}
+						segmentOffsetStartMs={offsetStart}
+						outputSpan={outputSpan}
+					/>
+				</div>
+				<div className="flex-shrink-0 p-3 border-t border-white/[0.07] bg-black/25">
+					{commonFooterLinks}
+				</div>
+			</div>
+		);
+	}
+
 	// Annotation selected: show its settings panel instead.
 	if (
 		selectedAnnotation &&
@@ -879,22 +1050,25 @@ export function SettingsPanel({
 				<div
 					className={cn(
 						"min-h-0 flex-1 overflow-hidden",
-						editorReadOnly && "pointer-events-none opacity-60",
+						editorReadOnly && !selectedHoldCollection && "pointer-events-none opacity-60",
 					)}
 				>
 					<AnnotationSettingsPanel
 						annotation={selectedAnnotation}
+						holdCollection={selectedHoldCollection}
+						contentReadOnly={editorReadOnly && Boolean(selectedHoldCollection)}
 						videoDurationMs={videoDurationMs}
 						onContentChange={(content) => onAnnotationContentChange(selectedAnnotation.id, content)}
 						onTypeChange={(type) => onAnnotationTypeChange(selectedAnnotation.id, type)}
 						onStyleChange={(style) => onAnnotationStyleChange(selectedAnnotation.id, style)}
 						onDurationChange={
-							onAnnotationDurationChange
+							onAnnotationDurationChange &&
+							(!selectedHoldCollection || selectedHoldCollection.segments.length >= 1)
 								? (durationMs) => onAnnotationDurationChange(selectedAnnotation.id, durationMs)
 								: undefined
 						}
 						onFreezeDuringAnnotationChange={
-							onAnnotationFreezeChange
+							onAnnotationFreezeChange && !selectedHoldCollection
 								? (enabled) => onAnnotationFreezeChange(selectedAnnotation.id, enabled)
 								: undefined
 						}
@@ -905,6 +1079,16 @@ export function SettingsPanel({
 						}
 						onDuplicate={
 							onAnnotationDuplicate ? () => onAnnotationDuplicate(selectedAnnotation.id) : undefined
+						}
+						onAppendHoldSegment={
+							selectedHoldCollection && onHoldCollectionAppendSegment
+								? () => onHoldCollectionAppendSegment(selectedHoldCollection.id)
+								: undefined
+						}
+						onSelectHoldSegment={
+							selectedHoldCollection && onSelectHoldSegment
+								? (segmentId) => onSelectHoldSegment(selectedHoldCollection.id, segmentId)
+								: undefined
 						}
 						onDelete={() => onAnnotationDelete(selectedAnnotation.id)}
 					/>

@@ -53,6 +53,7 @@ export interface VideoExporterConfig extends ExportConfig {
 	annotationRegions?: AnnotationRegion[];
 	audioAnnotationClips?: import("@/components/video-editor/types").AudioAnnotationClip[];
 	holdRegions?: HoldRegion[];
+	holdCollections?: import("@/components/video-editor/types").HoldCollection[];
 	previewWidth?: number;
 	previewHeight?: number;
 	cursorTelemetry?: import("@/components/video-editor/types").CursorTelemetryPoint[];
@@ -262,6 +263,7 @@ export class VideoExporter {
 				webcamPosition: this.config.webcamPosition,
 				annotationRegions: this.config.annotationRegions,
 				holdRegions: this.config.holdRegions,
+				holdCollections: this.config.holdCollections,
 				speedRegions: this.config.speedRegions,
 				previewWidth: this.config.previewWidth,
 				previewHeight: this.config.previewHeight,
