@@ -39,7 +39,11 @@ import {
 	resolveInterpolatedNativeCursorFrame,
 	resolveNativeCursorRenderAsset,
 } from "@/lib/cursor/nativeCursor";
-import { isOutputTimeInHold } from "@/lib/timelineMapping";
+import {
+	isFreezeLinkedRegionVisibleAtOutputTime,
+	isOutputTimeInHold,
+	isRegionVisibleAtOutputTime,
+} from "@/lib/timelineMapping";
 import { classifyWallpaper, DEFAULT_WALLPAPER, resolveImageWallpaperUrl } from "@/lib/wallpaper";
 import { getCssClipPath } from "@/lib/webcamMaskShapes";
 import type { CursorRecordingData } from "@/native/contracts";
@@ -157,6 +161,8 @@ interface VideoPlaybackProps {
 	// Render the selected zoom at the playhead even while paused, so the editor can
 	// preview the effect without leaving the focus-edit view.
 	isPreviewingZoom?: boolean;
+	/** When holds exist: source = normal playback + edit; preview = output clock + freeze. */
+	playbackMode?: import("./types").EditorPlaybackMode;
 }
 
 export interface VideoPlaybackRef {
@@ -285,6 +291,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			cursorClipToBounds = DEFAULT_CURSOR_SETTINGS.clipToBounds,
 			cursorTheme = DEFAULT_CURSOR_SETTINGS.theme,
 			isPreviewingZoom = false,
+			playbackMode = "source",
 		},
 		ref,
 	) => {
@@ -360,6 +367,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const trimRegionsRef = useRef<TrimRegion[]>([]);
 		const speedRegionsRef = useRef<SpeedRegion[]>([]);
 		const holdRegionsRef = useRef<import("./types").HoldRegion[]>([]);
+		const playbackModeRef = useRef(playbackMode);
+		playbackModeRef.current = playbackMode;
+		const overlayInteractionsEnabled = holdRegions.length === 0 || playbackMode === "source";
 		const sourceDurationMsRef = useRef(0);
 		const outputTimeRef = useRef(0);
 		const holdSeekInProgressRef = useRef(false);
@@ -709,6 +719,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		};
 
 		const handleOverlayPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+			if (!overlayInteractionsEnabled) return;
 			if (isPlayingRef.current) return;
 			const regionId = selectedZoomIdRef.current;
 			if (!regionId) return;
@@ -840,7 +851,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			const outputMs = outputTimeRef.current;
 			const sourceTimeMs = (video?.currentTime ?? 0) * 1000;
 			const holds = holdRegionsRef.current;
-			const hasHolds = holds.length > 0;
+			const useOutputClock = holds.length > 0 && playbackModeRef.current === "preview";
 
 			if (supplementalAudio && supplementalAudioPath && video) {
 				const activeSpeedRegion =
@@ -849,7 +860,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 					) ?? null;
 				supplementalAudio.playbackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1;
 
-				if (hasHolds && isOutputTimeInHold(outputMs, holds)) {
+				if (useOutputClock && isOutputTimeInHold(outputMs, holds)) {
 					supplementalAudio.pause();
 				} else if (!isPlayingRef.current) {
 					supplementalAudio.pause();
@@ -872,10 +883,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 					continue;
 				}
 
-				const anchorMs = hasHolds
+				const anchorMs = useOutputClock
 					? resolveAudioAnnotationOutputAnchorMs(clip.anchorMs, holds)
 					: clip.anchorMs;
-				const timeMs = hasHolds ? outputMs : sourceTimeMs;
+				const timeMs = useOutputClock ? outputMs : sourceTimeMs;
 				const inRange = timeMs >= anchorMs && timeMs < anchorMs + clip.durationMs;
 				const offsetSec = (timeMs - anchorMs) / 1000;
 
@@ -1348,6 +1359,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				trimRegionsRef,
 				speedRegionsRef,
 				holdRegionsRef,
+				playbackModeRef,
 				sourceDurationMsRef,
 				isScrubbingRef,
 				scrubEndTimerRef,
@@ -2113,6 +2125,29 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 								style={{ display: "none", pointerEvents: "none" }}
 							/>
 							{(() => {
+								const sourceMs = Math.round(currentTime * 1000);
+								const useOutputVisibility = holdRegions.length > 0 && playbackMode === "preview";
+								const outputMs = useOutputVisibility ? outputPlaybackTimeMs : sourceMs;
+
+								const isAnnotationVisible = (
+									startMs: number,
+									endMs: number,
+									freezeDuringAnnotation?: boolean,
+								) => {
+									if (!useOutputVisibility) {
+										return sourceMs >= startMs && sourceMs < endMs;
+									}
+									if (freezeDuringAnnotation) {
+										return isFreezeLinkedRegionVisibleAtOutputTime(
+											outputMs,
+											startMs,
+											endMs,
+											holdRegions,
+										);
+									}
+									return isRegionVisibleAtOutputTime(outputMs, startMs, endMs, holdRegions);
+								};
+
 								const filteredAnnotations = (annotationRegions || []).filter((annotation) => {
 									if (
 										typeof annotation.startMs !== "number" ||
@@ -2122,8 +2157,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 									if (annotation.id === selectedAnnotationId) return true;
 
-									const timeMs = Math.round(currentTime * 1000);
-									return timeMs >= annotation.startMs && timeMs < annotation.endMs;
+									return isAnnotationVisible(
+										annotation.startMs,
+										annotation.endMs,
+										annotation.freezeDuringAnnotation,
+									);
 								});
 
 								const filteredBlurRegions = (blurRegions || []).filter((blurRegion) => {
@@ -2135,8 +2173,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 									if (blurRegion.id === selectedBlurId) return true;
 
-									const timeMs = Math.round(currentTime * 1000);
-									return timeMs >= blurRegion.startMs && timeMs < blurRegion.endMs;
+									return isAnnotationVisible(blurRegion.startMs, blurRegion.endMs);
 								});
 
 								const sorted = [
@@ -2231,18 +2268,17 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 												: item.region.id === selectedAnnotationId
 										}
 										previewSourceCanvas={previewSnapshotCanvas}
-										previewFrameVersion={
-											holdRegions.length > 0 ? outputPlaybackTimeMs : Math.round(currentTime * 1000)
-										}
+										previewFrameVersion={useOutputVisibility ? outputMs : sourceMs}
 										currentTimeMs={
-											holdRegions.length > 0
+											useOutputVisibility
 												? resolveAnnotationAnimationTimeMs(
-														outputPlaybackTimeMs,
+														outputMs,
 														item.region.startMs,
 														holdRegions,
 													)
-												: Math.round(currentTime * 1000)
+												: sourceMs
 										}
+										interactionDisabled={!overlayInteractionsEnabled}
 									/>
 								));
 							})()}

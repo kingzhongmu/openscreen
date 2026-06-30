@@ -147,3 +147,25 @@
 	border-top-right-radius: 9px;
 	border-bottom-right-radius: 9px;
 }
+
+.glassHold {
+	position: relative;
+	border-radius: 10px;
+	background: rgba(56, 189, 248, 0.12);
+	border: 1px dashed rgba(56, 189, 248, 0.55);
+	box-shadow: 0 2px 12px 0 rgba(56, 189, 248, 0.08) inset;
+	margin: 3px 0;
+	backdrop-filter: blur(4px);
+	-webkit-backdrop-filter: blur(4px);
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glassHold:hover {
+	background: rgba(56, 189, 248, 0.2);
+	border-color: rgba(125, 211, 252, 0.75);
+}
+
+.glassHold:hover .zoomEndCap,
+.glassHold.selected .zoomEndCap {
+	opacity: 1;
+}

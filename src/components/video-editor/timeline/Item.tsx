@@ -1,9 +1,10 @@
 import type { Span } from "dnd-timeline";
 import { useItem } from "dnd-timeline";
-import { Gauge, MessageSquare, Mic, MousePointer2, Scissors, ZoomIn } from "lucide-react";
+import { Gauge, MessageSquare, Mic, MousePointer2, Pause, Scissors, ZoomIn } from "lucide-react";
 import { useMemo } from "react";
 import { useScopedT } from "@/contexts/I18nContext";
 import { cn } from "@/lib/utils";
+import { formatAnnotationClockMs } from "../positionAnnotation";
 import glassStyles from "./ItemGlass.module.css";
 
 interface ItemProps {
@@ -17,7 +18,8 @@ interface ItemProps {
 	zoomCustomScale?: number;
 	speedValue?: number;
 	isAutoFocus?: boolean;
-	variant?: "zoom" | "trim" | "annotation" | "speed" | "blur" | "audio";
+	variant?: "zoom" | "trim" | "annotation" | "speed" | "blur" | "audio" | "hold";
+	readOnly?: boolean;
 }
 
 // Map zoom depth to multiplier labels
@@ -51,6 +53,7 @@ export default function Item({
 	speedValue,
 	isAutoFocus = false,
 	variant = "zoom",
+	readOnly = false,
 	children,
 }: ItemProps) {
 	const t = useScopedT("timeline");
@@ -64,31 +67,38 @@ export default function Item({
 	const isTrim = variant === "trim";
 	const isSpeed = variant === "speed";
 	const isAudio = variant === "audio";
+	const isHold = variant === "hold";
 
-	const glassClass = isZoom
-		? glassStyles.glassGreen
-		: isTrim
-			? glassStyles.glassRed
-			: isSpeed
-				? glassStyles.glassAmber
-				: isAudio
-					? glassStyles.glassYellow
-					: glassStyles.glassYellow;
+	const glassClass = isHold
+		? glassStyles.glassHold
+		: isZoom
+			? glassStyles.glassGreen
+			: isTrim
+				? glassStyles.glassRed
+				: isSpeed
+					? glassStyles.glassAmber
+					: isAudio
+						? glassStyles.glassYellow
+						: glassStyles.glassYellow;
 
-	const endCapColor = isZoom
-		? "#21916A"
-		: isTrim
-			? "#ef4444"
-			: isSpeed
-				? "#d97706"
-				: isAudio
-					? "#a78bfa"
-					: "#B4A046";
+	const endCapColor = isHold
+		? "#38bdf8"
+		: isZoom
+			? "#21916A"
+			: isTrim
+				? "#ef4444"
+				: isSpeed
+					? "#d97706"
+					: isAudio
+						? "#a78bfa"
+						: "#B4A046";
 
-	const timeLabel = useMemo(
-		() => `${formatMs(span.start)} – ${formatMs(span.end)}`,
-		[span.start, span.end],
-	);
+	const timeLabel = useMemo(() => {
+		if (isHold || isAudio) {
+			return `${formatAnnotationClockMs(span.start)} – ${formatAnnotationClockMs(span.end)}`;
+		}
+		return `${formatMs(span.start)} – ${formatMs(span.end)}`;
+	}, [span.start, span.end, isHold, isAudio]);
 
 	// Minimum clickable width on the outer wrapper. Kept small so items keep their real
 	// positions; zoom in to interact with sub-second items precisely.
@@ -99,8 +109,8 @@ export default function Item({
 		<div
 			ref={setNodeRef}
 			style={safeItemStyle}
-			{...listeners}
-			{...attributes}
+			{...(readOnly ? {} : listeners)}
+			{...(readOnly ? {} : attributes)}
 			onPointerDownCapture={() => onSelect?.()}
 			className="group"
 		>
@@ -108,7 +118,8 @@ export default function Item({
 				<div
 					className={cn(
 						glassClass,
-						"w-full h-full overflow-hidden flex items-center justify-center gap-1.5 cursor-grab active:cursor-grabbing relative",
+						"w-full h-full overflow-hidden flex items-center justify-center gap-1.5 relative",
+						readOnly ? "cursor-default" : "cursor-grab active:cursor-grabbing",
 						isSelected && glassStyles.selected,
 					)}
 					style={{ height: 30, color: "#fff", minWidth: 24 }}
@@ -120,8 +131,8 @@ export default function Item({
 					<div
 						className={cn(glassStyles.zoomEndCap, glassStyles.left)}
 						style={{
-							cursor: "col-resize",
-							pointerEvents: "auto",
+							cursor: readOnly ? "default" : "col-resize",
+							pointerEvents: readOnly ? "none" : "auto",
 							width: 8,
 							opacity: 0.9,
 							background: endCapColor,
@@ -131,8 +142,8 @@ export default function Item({
 					<div
 						className={cn(glassStyles.zoomEndCap, glassStyles.right)}
 						style={{
-							cursor: "col-resize",
-							pointerEvents: "auto",
+							cursor: readOnly ? "default" : "col-resize",
+							pointerEvents: readOnly ? "none" : "auto",
 							width: 8,
 							opacity: 0.9,
 							background: endCapColor,
@@ -169,6 +180,13 @@ export default function Item({
 									<Gauge className="w-3.5 h-3.5 shrink-0" />
 									<span className="text-[11px] font-semibold whitespace-nowrap">
 										{speedValue !== undefined ? `${speedValue}×` : t("labels.speed")}
+									</span>
+								</>
+							) : isHold ? (
+								<>
+									<Pause className="w-3.5 h-3.5 shrink-0" />
+									<span className="text-[11px] font-semibold truncate whitespace-nowrap">
+										{children}
 									</span>
 								</>
 							) : isAudio ? (

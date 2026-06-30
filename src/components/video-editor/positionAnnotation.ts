@@ -89,9 +89,9 @@ export function formatAnnotationClockMs(ms: number): string {
 	const safe = Math.max(0, Math.round(ms));
 	const mins = Math.floor(safe / 60000);
 	const secs = Math.floor((safe % 60000) / 1000);
-	const tenths = Math.floor((safe % 1000) / 100);
+	const frac = ((safe % 1000) / 1000).toFixed(2).slice(1);
 	if (mins > 0) {
-		return `${mins}:${secs.toString().padStart(2, "0")}.${tenths}`;
+		return `${mins}:${secs.toString().padStart(2, "0")}${frac}`;
 	}
-	return `${secs}.${tenths}s`;
+	return `${secs}${frac}s`;
 }

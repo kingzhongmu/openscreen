@@ -25,6 +25,12 @@ import { useScopedT } from "@/contexts/I18nContext";
 import { useShortcuts } from "@/contexts/ShortcutsContext";
 import { useAudioPeaks } from "@/hooks/useAudioPeaks";
 import { matchesShortcut } from "@/lib/shortcuts";
+import {
+	getFreezeLinkedOutputSpan,
+	outputToSourceMs,
+	sourceSpanToOutputSpan,
+	sourceToOutputMs,
+} from "@/lib/timelineMapping";
 import { cn } from "@/lib/utils";
 import { ASPECT_RATIOS, type AspectRatio, getAspectRatioLabel } from "@/utils/aspectRatioUtils";
 import { formatShortcut } from "@/utils/platformUtils";
@@ -34,6 +40,8 @@ import type {
 	AnnotationRegion,
 	AnnotationType,
 	AudioAnnotationClip,
+	EditorPlaybackMode,
+	HoldRegion,
 	SpeedRegion,
 	TrimRegion,
 	ZoomRegion,
@@ -50,13 +58,32 @@ const ANNOTATION_ROW_ID = "row-annotation";
 const AUDIO_ANNOTATION_ROW_ID = "row-audio-annotation";
 const BLUR_ROW_ID = "row-blur";
 const SPEED_ROW_ID = "row-speed";
+const HOLD_ROW_ID = "row-hold";
 const FALLBACK_RANGE_MS = 1000;
+
+function formatTimelineClock(ms: number): string {
+	const totalSeconds = ms / 1000;
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes > 0) {
+		return `${minutes}:${seconds.toFixed(1).padStart(4, "0")}`;
+	}
+	return `${seconds.toFixed(1)}s`;
+}
+
 const TARGET_MARKER_COUNT = 12;
 
 interface TimelineEditorProps {
 	videoDuration: number;
 	hasVideoSource?: boolean;
 	currentTime: number;
+	/** Output playhead ms (preview badge only). */
+	outputPlaybackTimeMs?: number;
+	outputDurationMs?: number;
+	playbackMode?: EditorPlaybackMode;
+	onPlaybackModeChange?: (mode: EditorPlaybackMode) => void;
+	timelineReadOnly?: boolean;
+	holdRegions?: HoldRegion[];
 	onSeek?: (time: number) => void;
 	zoomRegions: ZoomRegion[];
 	onZoomAdded: (span: Span) => void;
@@ -125,7 +152,7 @@ interface TimelineRenderItem {
 	zoomCustomScale?: number;
 	speedValue?: number;
 	isAutoFocus?: boolean;
-	variant: "zoom" | "trim" | "annotation" | "speed" | "blur" | "audio";
+	variant: "zoom" | "trim" | "annotation" | "speed" | "blur" | "audio" | "hold";
 }
 
 const SCALE_CANDIDATES = [
@@ -569,6 +596,7 @@ function Timeline({
 	items,
 	videoDurationMs,
 	currentTimeMs,
+	timelineReadOnly = false,
 	onSeek,
 	onRangeChange,
 	onSelectZoom,
@@ -590,6 +618,7 @@ function Timeline({
 	items: TimelineRenderItem[];
 	videoDurationMs: number;
 	currentTimeMs: number;
+	timelineReadOnly?: boolean;
 	onSeek?: (time: number) => void;
 	onRangeChange?: (updater: (previous: Range) => Range) => void;
 	onSelectZoom?: (id: string | null) => void;
@@ -771,6 +800,7 @@ function Timeline({
 
 	const zoomItems = items.filter((item) => item.rowId === ZOOM_ROW_ID);
 	const trimItems = items.filter((item) => item.rowId === TRIM_ROW_ID);
+	const holdItems = items.filter((item) => item.rowId === HOLD_ROW_ID);
 	const annotationItems = items.filter((item) => item.rowId === ANNOTATION_ROW_ID);
 	const audioAnnotationItems = items.filter((item) => item.rowId === AUDIO_ANNOTATION_ROW_ID);
 	const blurItems = items.filter((item) => item.rowId === BLUR_ROW_ID);
@@ -814,6 +844,7 @@ function Timeline({
 						zoomCustomScale={item.zoomCustomScale}
 						isAutoFocus={item.isAutoFocus}
 						variant="zoom"
+						readOnly={timelineReadOnly}
 					>
 						{item.label}
 					</Item>
@@ -844,11 +875,38 @@ function Timeline({
 						isSelected={item.id === selectedTrimId}
 						onSelect={() => onSelectTrim?.(item.id)}
 						variant="trim"
+						readOnly={timelineReadOnly}
 					>
 						{item.label}
 					</Item>
 				))}
 			</Row>
+
+			{holdItems.length > 0 && (
+				<Row id={HOLD_ROW_ID} isEmpty={false} hint={t("hints.holdSegments")}>
+					{holdItems.map((item) => {
+						const isAudio = item.variant === "audio";
+						return (
+							<Item
+								id={item.id}
+								key={item.id}
+								rowId={item.rowId}
+								span={item.span}
+								isSelected={
+									isAudio ? item.id === selectedAudioAnnotationId : item.id === selectedAnnotationId
+								}
+								onSelect={() =>
+									isAudio ? onSelectAudioAnnotation?.(item.id) : onSelectAnnotation?.(item.id)
+								}
+								variant={isAudio ? "audio" : "hold"}
+								readOnly={timelineReadOnly}
+							>
+								{item.label}
+							</Item>
+						);
+					})}
+				</Row>
+			)}
 
 			<Row
 				id={ANNOTATION_ROW_ID}
@@ -864,6 +922,7 @@ function Timeline({
 						isSelected={item.id === selectedAnnotationId}
 						onSelect={() => onSelectAnnotation?.(item.id)}
 						variant="annotation"
+						readOnly={timelineReadOnly}
 					>
 						{item.label}
 					</Item>
@@ -884,6 +943,7 @@ function Timeline({
 						isSelected={item.id === selectedAudioAnnotationId}
 						onSelect={() => onSelectAudioAnnotation?.(item.id)}
 						variant="audio"
+						readOnly={timelineReadOnly}
 					>
 						{item.label}
 					</Item>
@@ -901,6 +961,7 @@ function Timeline({
 							isSelected={item.id === selectedBlurId}
 							onSelect={() => onSelectBlur?.(item.id)}
 							variant={item.variant}
+							readOnly={timelineReadOnly}
 						>
 							{item.label}
 						</Item>
@@ -919,6 +980,7 @@ function Timeline({
 						onSelect={() => onSelectSpeed?.(item.id)}
 						variant="speed"
 						speedValue={item.speedValue}
+						readOnly={timelineReadOnly}
 					>
 						{item.label}
 					</Item>
@@ -932,6 +994,12 @@ export default function TimelineEditor({
 	videoDuration,
 	hasVideoSource = false,
 	currentTime,
+	outputPlaybackTimeMs,
+	outputDurationMs,
+	playbackMode = "source",
+	onPlaybackModeChange,
+	timelineReadOnly = false,
+	holdRegions = [],
 	onSeek,
 	zoomRegions,
 	onZoomAdded,
@@ -981,9 +1049,47 @@ export default function TimelineEditor({
 	captionsLabel,
 }: TimelineEditorProps) {
 	const t = useScopedT("timeline");
-	const totalMs = useMemo(() => Math.max(0, Math.round(videoDuration * 1000)), [videoDuration]);
+	const sourceDurationMs = useMemo(
+		() => Math.max(0, Math.round(videoDuration * 1000)),
+		[videoDuration],
+	);
+	const hasFreezeTimeline = holdRegions.length > 0;
+	const usesOutputTimelineAxis = playbackMode === "preview" && holdRegions.length > 0;
+	const totalMs = usesOutputTimelineAxis
+		? (outputDurationMs ?? sourceDurationMs)
+		: sourceDurationMs;
 	const currentTimeMs = useMemo(() => Math.round(currentTime * 1000), [currentTime]);
-	const timelineScale = useMemo(() => calculateTimelineScale(videoDuration), [videoDuration]);
+	const timelinePlayheadMs = useMemo(() => {
+		if (usesOutputTimelineAxis) {
+			return outputPlaybackTimeMs ?? sourceToOutputMs(currentTimeMs, holdRegions);
+		}
+		return currentTimeMs;
+	}, [usesOutputTimelineAxis, outputPlaybackTimeMs, currentTimeMs, holdRegions]);
+
+	const mapSpanToTimeline = useCallback(
+		(startMs: number, endMs: number) => {
+			if (!usesOutputTimelineAxis) {
+				return { start: startMs, end: endMs };
+			}
+			return sourceSpanToOutputSpan(startMs, endMs, holdRegions);
+		},
+		[usesOutputTimelineAxis, holdRegions],
+	);
+
+	const mapFreezeSpanToTimeline = useCallback(
+		(startMs: number, endMs: number) => {
+			if (!usesOutputTimelineAxis) {
+				return { start: startMs, end: endMs };
+			}
+			return getFreezeLinkedOutputSpan(startMs, endMs, Math.max(1, endMs - startMs), holdRegions);
+		},
+		[usesOutputTimelineAxis, holdRegions],
+	);
+
+	const timelineScale = useMemo(
+		() => calculateTimelineScale(usesOutputTimelineAxis ? totalMs / 1000 : videoDuration),
+		[videoDuration, usesOutputTimelineAxis, totalMs],
+	);
 	const safeMinDurationMs = useMemo(
 		() =>
 			totalMs > 0
@@ -991,6 +1097,8 @@ export default function TimelineEditor({
 				: timelineScale.minItemDurationMs,
 		[timelineScale.minItemDurationMs, totalMs],
 	);
+
+	const toSourceSpanFromTimeline = useCallback((_id: string, span: Span): Span => span, []);
 
 	const [range, setRange] = useState<Range>(() => createInitialRange(totalMs));
 	const [keyframes, setKeyframes] = useState<{ id: string; time: number }[]>([]);
@@ -1074,6 +1182,21 @@ export default function TimelineEditor({
 		setRange(createInitialRange(totalMs));
 	}, [totalMs]);
 
+	const handleAxisSeek = useCallback(
+		(timeSec: number) => {
+			if (!onSeek) {
+				return;
+			}
+			if (usesOutputTimelineAxis) {
+				const sourceMs = outputToSourceMs(Math.round(timeSec * 1000), holdRegions);
+				onSeek(sourceMs / 1000);
+				return;
+			}
+			onSeek(timeSec);
+		},
+		[onSeek, usesOutputTimelineAxis, holdRegions],
+	);
+
 	// Normalize regions only when timeline bounds change. Reading via refs avoids a
 	// dependency loop that would re-fire on every drag and race dnd-timeline's state.
 	const zoomRegionsRef = useRef(zoomRegions);
@@ -1084,16 +1207,19 @@ export default function TimelineEditor({
 	speedRegionsRef.current = speedRegions;
 
 	useEffect(() => {
-		if (totalMs === 0 || safeMinDurationMs <= 0) {
+		if (sourceDurationMs === 0 || safeMinDurationMs <= 0) {
 			return;
 		}
 
 		zoomRegionsRef.current.forEach((region) => {
-			const clampedStart = Math.max(0, Math.min(region.startMs, totalMs));
+			const clampedStart = Math.max(0, Math.min(region.startMs, sourceDurationMs));
 			const minEnd = clampedStart + safeMinDurationMs;
-			const clampedEnd = Math.min(totalMs, Math.max(minEnd, region.endMs));
-			const normalizedStart = Math.max(0, Math.min(clampedStart, totalMs - safeMinDurationMs));
-			const normalizedEnd = Math.max(minEnd, Math.min(clampedEnd, totalMs));
+			const clampedEnd = Math.min(sourceDurationMs, Math.max(minEnd, region.endMs));
+			const normalizedStart = Math.max(
+				0,
+				Math.min(clampedStart, sourceDurationMs - safeMinDurationMs),
+			);
+			const normalizedEnd = Math.max(minEnd, Math.min(clampedEnd, sourceDurationMs));
 
 			if (normalizedStart !== region.startMs || normalizedEnd !== region.endMs) {
 				onZoomSpanChange(region.id, { start: normalizedStart, end: normalizedEnd });
@@ -1101,11 +1227,14 @@ export default function TimelineEditor({
 		});
 
 		trimRegionsRef.current.forEach((region) => {
-			const clampedStart = Math.max(0, Math.min(region.startMs, totalMs));
+			const clampedStart = Math.max(0, Math.min(region.startMs, sourceDurationMs));
 			const minEnd = clampedStart + safeMinDurationMs;
-			const clampedEnd = Math.min(totalMs, Math.max(minEnd, region.endMs));
-			const normalizedStart = Math.max(0, Math.min(clampedStart, totalMs - safeMinDurationMs));
-			const normalizedEnd = Math.max(minEnd, Math.min(clampedEnd, totalMs));
+			const clampedEnd = Math.min(sourceDurationMs, Math.max(minEnd, region.endMs));
+			const normalizedStart = Math.max(
+				0,
+				Math.min(clampedStart, sourceDurationMs - safeMinDurationMs),
+			);
+			const normalizedEnd = Math.max(minEnd, Math.min(clampedEnd, sourceDurationMs));
 
 			if (normalizedStart !== region.startMs || normalizedEnd !== region.endMs) {
 				onTrimSpanChange?.(region.id, { start: normalizedStart, end: normalizedEnd });
@@ -1113,17 +1242,20 @@ export default function TimelineEditor({
 		});
 
 		speedRegionsRef.current.forEach((region) => {
-			const clampedStart = Math.max(0, Math.min(region.startMs, totalMs));
+			const clampedStart = Math.max(0, Math.min(region.startMs, sourceDurationMs));
 			const minEnd = clampedStart + safeMinDurationMs;
-			const clampedEnd = Math.min(totalMs, Math.max(minEnd, region.endMs));
-			const normalizedStart = Math.max(0, Math.min(clampedStart, totalMs - safeMinDurationMs));
-			const normalizedEnd = Math.max(minEnd, Math.min(clampedEnd, totalMs));
+			const clampedEnd = Math.min(sourceDurationMs, Math.max(minEnd, region.endMs));
+			const normalizedStart = Math.max(
+				0,
+				Math.min(clampedStart, sourceDurationMs - safeMinDurationMs),
+			);
+			const normalizedEnd = Math.max(minEnd, Math.min(clampedEnd, sourceDurationMs));
 
 			if (normalizedStart !== region.startMs || normalizedEnd !== region.endMs) {
 				onSpeedSpanChange?.(region.id, { start: normalizedStart, end: normalizedEnd });
 			}
 		});
-	}, [totalMs, safeMinDurationMs, onZoomSpanChange, onTrimSpanChange, onSpeedSpanChange]);
+	}, [sourceDurationMs, safeMinDurationMs, onZoomSpanChange, onTrimSpanChange, onSpeedSpanChange]);
 
 	const hasOverlap = useCallback(
 		(newSpan: Span, excludeId?: string): boolean => {
@@ -1132,16 +1264,18 @@ export default function TimelineEditor({
 			const isAnnotationItem = annotationRegions.some((r) => r.id === excludeId);
 			const isBlurItem = blurRegions.some((r) => r.id === excludeId);
 			const isSpeedItem = speedRegions.some((r) => r.id === excludeId);
+			const isAudioAnnotationItem = audioAnnotationClips.some((r) => r.id === excludeId);
 
-			if (isAnnotationItem || isBlurItem) {
+			if (isAnnotationItem || isBlurItem || isAudioAnnotationItem) {
 				return false;
 			}
 
 			const checkOverlap = (regions: (ZoomRegion | TrimRegion | SpeedRegion)[]) => {
 				return regions.some((region) => {
 					if (region.id === excludeId) return false;
+					const span = mapSpanToTimeline(region.startMs, region.endMs);
 					// True intersection, adjacency is allowed
-					return newSpan.end > region.startMs && newSpan.start < region.endMs;
+					return newSpan.end > span.start && newSpan.start < span.end;
 				});
 			};
 
@@ -1159,29 +1293,37 @@ export default function TimelineEditor({
 
 			return false;
 		},
-		[zoomRegions, trimRegions, annotationRegions, blurRegions, speedRegions],
+		[
+			zoomRegions,
+			trimRegions,
+			annotationRegions,
+			blurRegions,
+			speedRegions,
+			audioAnnotationClips,
+			mapSpanToTimeline,
+		],
 	);
 
 	// 5% of the timeline or 1000ms, whichever is larger, so it's wide enough to grab.
 	const defaultRegionDurationMs = useMemo(
-		() => Math.max(1000, Math.round(totalMs * 0.05)),
-		[totalMs],
+		() => Math.max(1000, Math.round(sourceDurationMs * 0.05)),
+		[sourceDurationMs],
 	);
 
 	const handleAddZoom = useCallback(() => {
-		if (!videoDuration || videoDuration === 0 || totalMs === 0) {
+		if (!videoDuration || videoDuration === 0 || sourceDurationMs === 0) {
 			return;
 		}
 
-		const defaultDuration = Math.min(defaultRegionDurationMs, totalMs);
+		const defaultDuration = Math.min(defaultRegionDurationMs, sourceDurationMs);
 		if (defaultDuration <= 0) {
 			return;
 		}
 
-		const startPos = Math.max(0, Math.min(currentTimeMs, totalMs));
+		const startPos = Math.max(0, Math.min(currentTimeMs, sourceDurationMs));
 		const sorted = [...zoomRegions].sort((a, b) => a.startMs - b.startMs);
 		const nextRegion = sorted.find((region) => region.startMs > startPos);
-		const gapToNext = nextRegion ? nextRegion.startMs - startPos : totalMs - startPos;
+		const gapToNext = nextRegion ? nextRegion.startMs - startPos : sourceDurationMs - startPos;
 
 		const isOverlapping = sorted.some(
 			(region) => startPos >= region.startMs && startPos < region.endMs,
@@ -1195,22 +1337,30 @@ export default function TimelineEditor({
 
 		const actualDuration = Math.min(defaultRegionDurationMs, gapToNext);
 		onZoomAdded({ start: startPos, end: startPos + actualDuration });
-	}, [videoDuration, totalMs, currentTimeMs, zoomRegions, onZoomAdded, defaultRegionDurationMs, t]);
+	}, [
+		videoDuration,
+		sourceDurationMs,
+		currentTimeMs,
+		zoomRegions,
+		onZoomAdded,
+		defaultRegionDurationMs,
+		t,
+	]);
 
 	const handleAddTrim = useCallback(() => {
-		if (!videoDuration || videoDuration === 0 || totalMs === 0 || !onTrimAdded) {
+		if (!videoDuration || videoDuration === 0 || sourceDurationMs === 0 || !onTrimAdded) {
 			return;
 		}
 
-		const defaultDuration = Math.min(defaultRegionDurationMs, totalMs);
+		const defaultDuration = Math.min(defaultRegionDurationMs, sourceDurationMs);
 		if (defaultDuration <= 0) {
 			return;
 		}
 
-		const startPos = Math.max(0, Math.min(currentTimeMs, totalMs));
+		const startPos = Math.max(0, Math.min(currentTimeMs, sourceDurationMs));
 		const sorted = [...trimRegions].sort((a, b) => a.startMs - b.startMs);
 		const nextRegion = sorted.find((region) => region.startMs > startPos);
-		const gapToNext = nextRegion ? nextRegion.startMs - startPos : totalMs - startPos;
+		const gapToNext = nextRegion ? nextRegion.startMs - startPos : sourceDurationMs - startPos;
 
 		const isOverlapping = sorted.some(
 			(region) => startPos >= region.startMs && startPos < region.endMs,
@@ -1224,22 +1374,30 @@ export default function TimelineEditor({
 
 		const actualDuration = Math.min(defaultRegionDurationMs, gapToNext);
 		onTrimAdded({ start: startPos, end: startPos + actualDuration });
-	}, [videoDuration, totalMs, currentTimeMs, trimRegions, onTrimAdded, defaultRegionDurationMs, t]);
+	}, [
+		videoDuration,
+		sourceDurationMs,
+		currentTimeMs,
+		trimRegions,
+		onTrimAdded,
+		defaultRegionDurationMs,
+		t,
+	]);
 
 	const handleAddSpeed = useCallback(() => {
-		if (!videoDuration || videoDuration === 0 || totalMs === 0 || !onSpeedAdded) {
+		if (!videoDuration || videoDuration === 0 || sourceDurationMs === 0 || !onSpeedAdded) {
 			return;
 		}
 
-		const defaultDuration = Math.min(defaultRegionDurationMs, totalMs);
+		const defaultDuration = Math.min(defaultRegionDurationMs, sourceDurationMs);
 		if (defaultDuration <= 0) {
 			return;
 		}
 
-		const startPos = Math.max(0, Math.min(currentTimeMs, totalMs));
+		const startPos = Math.max(0, Math.min(currentTimeMs, sourceDurationMs));
 		const sorted = [...speedRegions].sort((a, b) => a.startMs - b.startMs);
 		const nextRegion = sorted.find((region) => region.startMs > startPos);
-		const gapToNext = nextRegion ? nextRegion.startMs - startPos : totalMs - startPos;
+		const gapToNext = nextRegion ? nextRegion.startMs - startPos : sourceDurationMs - startPos;
 
 		const isOverlapping = sorted.some(
 			(region) => startPos >= region.startMs && startPos < region.endMs,
@@ -1255,7 +1413,7 @@ export default function TimelineEditor({
 		onSpeedAdded({ start: startPos, end: startPos + actualDuration });
 	}, [
 		videoDuration,
-		totalMs,
+		sourceDurationMs,
 		currentTimeMs,
 		speedRegions,
 		onSpeedAdded,
@@ -1276,6 +1434,27 @@ export default function TimelineEditor({
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+				return;
+			}
+
+			if (timelineReadOnly) {
+				if (e.key === "Tab" && annotationRegions.length > 0) {
+					const overlapping = annotationRegions
+						.filter((a) => currentTimeMs >= a.startMs && currentTimeMs <= a.endMs)
+						.sort((a, b) => a.zIndex - b.zIndex);
+					if (overlapping.length > 0) {
+						e.preventDefault();
+						if (!selectedAnnotationId || !overlapping.some((a) => a.id === selectedAnnotationId)) {
+							onSelectAnnotation?.(overlapping[0].id);
+						} else {
+							const currentIndex = overlapping.findIndex((a) => a.id === selectedAnnotationId);
+							const nextIndex = e.shiftKey
+								? (currentIndex - 1 + overlapping.length) % overlapping.length
+								: (currentIndex + 1) % overlapping.length;
+							onSelectAnnotation?.(overlapping[nextIndex].id);
+						}
+					}
+				}
 				return;
 			}
 
@@ -1300,7 +1479,6 @@ export default function TimelineEditor({
 
 			// Tab cycles through overlapping annotations at the current time
 			if (e.key === "Tab" && annotationRegions.length > 0) {
-				const currentTimeMs = Math.round(currentTime * 1000);
 				const overlapping = annotationRegions
 					.filter((a) => currentTimeMs >= a.startMs && currentTimeMs <= a.endMs)
 					.sort((a, b) => a.zIndex - b.zIndex);
@@ -1365,10 +1543,11 @@ export default function TimelineEditor({
 		selectedBlurId,
 		selectedSpeedId,
 		annotationRegions,
-		currentTime,
+		currentTimeMs,
 		onSelectAnnotation,
 		keyShortcuts,
 		isMac,
+		timelineReadOnly,
 	]);
 
 	const clampedRange = useMemo<Range>(() => {
@@ -1383,76 +1562,145 @@ export default function TimelineEditor({
 	}, [range, totalMs]);
 
 	const timelineItems = useMemo<TimelineRenderItem[]>(() => {
-		const zooms: TimelineRenderItem[] = zoomRegions.map((region, index) => ({
-			id: region.id,
-			rowId: ZOOM_ROW_ID,
-			span: { start: region.startMs, end: region.endMs },
-			label: t("labels.zoomItem", { index: String(index + 1) }),
-			zoomDepth: region.depth,
-			zoomCustomScale: region.customScale,
-			isAutoFocus: region.focusMode === "auto",
-			variant: "zoom",
-		}));
-
-		const trims: TimelineRenderItem[] = trimRegions.map((region, index) => ({
-			id: region.id,
-			rowId: TRIM_ROW_ID,
-			span: { start: region.startMs, end: region.endMs },
-			label: t("labels.trimItem", { index: String(index + 1) }),
-			variant: "trim",
-		}));
-
-		const annotations: TimelineRenderItem[] = annotationRegions.map((region) => {
-			let label: string;
-
-			if (region.type === "text") {
-				const preview = region.content.trim() || t("labels.emptyText");
-				label = preview.length > 20 ? `${preview.substring(0, 20)}...` : preview;
-			} else if (region.type === "image") {
-				label = t("labels.imageItem");
-			} else {
-				label = t("labels.annotationItem");
-			}
-
+		const zooms: TimelineRenderItem[] = zoomRegions.map((region, index) => {
+			const span = mapSpanToTimeline(region.startMs, region.endMs);
 			return {
 				id: region.id,
-				rowId: ANNOTATION_ROW_ID,
-				span: { start: region.startMs, end: region.endMs },
-				label,
-				variant: "annotation",
+				rowId: ZOOM_ROW_ID,
+				span: { start: span.start, end: span.end },
+				label: t("labels.zoomItem", { index: String(index + 1) }),
+				zoomDepth: region.depth,
+				zoomCustomScale: region.customScale,
+				isAutoFocus: region.focusMode === "auto",
+				variant: "zoom",
 			};
 		});
 
-		const audioAnnotations: TimelineRenderItem[] = audioAnnotationClips.map((clip, index) => ({
-			id: clip.id,
-			rowId: AUDIO_ANNOTATION_ROW_ID,
-			span: { start: clip.anchorMs, end: clip.anchorMs + clip.durationMs },
-			label: clip.fileName
-				? clip.fileName.length > 20
-					? `${clip.fileName.substring(0, 20)}...`
-					: clip.fileName
-				: t("labels.audioAnnotationItem", { index: String(index + 1) }),
-			variant: "audio",
-		}));
+		const trims: TimelineRenderItem[] = trimRegions.map((region, index) => {
+			const span = mapSpanToTimeline(region.startMs, region.endMs);
+			return {
+				id: region.id,
+				rowId: TRIM_ROW_ID,
+				span: { start: span.start, end: span.end },
+				label: t("labels.trimItem", { index: String(index + 1) }),
+				variant: "trim",
+			};
+		});
 
-		const blurs: TimelineRenderItem[] = blurRegions.map((region, index) => ({
-			id: region.id,
-			rowId: BLUR_ROW_ID,
-			span: { start: region.startMs, end: region.endMs },
-			label: t("labels.blurItem", { index: String(index + 1) }),
-			variant: "blur",
-		}));
+		const annotations: TimelineRenderItem[] = annotationRegions
+			.filter((region) => !region.freezeDuringAnnotation)
+			.map((region) => {
+				let label: string;
 
-		const speeds: TimelineRenderItem[] = speedRegions.map((region, index) => ({
-			id: region.id,
-			rowId: SPEED_ROW_ID,
-			span: { start: region.startMs, end: region.endMs },
-			label: t("labels.speedItem", { index: String(index + 1) }),
-			speedValue: region.speed,
-			variant: "speed",
-		}));
+				if (region.type === "text") {
+					const preview = region.content.trim() || t("labels.emptyText");
+					label = preview.length > 20 ? `${preview.substring(0, 20)}...` : preview;
+				} else if (region.type === "image") {
+					label = t("labels.imageItem");
+				} else {
+					label = t("labels.annotationItem");
+				}
 
-		return [...zooms, ...trims, ...annotations, ...audioAnnotations, ...blurs, ...speeds];
+				const span = mapSpanToTimeline(region.startMs, region.endMs);
+				return {
+					id: region.id,
+					rowId: ANNOTATION_ROW_ID,
+					span: { start: span.start, end: span.end },
+					label,
+					variant: "annotation",
+				};
+			});
+
+		const audioAnnotations: TimelineRenderItem[] = audioAnnotationClips
+			.filter((clip) => !clip.freezeDuringAnnotation)
+			.map((clip, index) => {
+				const span = mapSpanToTimeline(clip.anchorMs, clip.anchorMs + clip.durationMs);
+				return {
+					id: clip.id,
+					rowId: AUDIO_ANNOTATION_ROW_ID,
+					span: { start: span.start, end: span.end },
+					label: clip.fileName
+						? clip.fileName.length > 20
+							? `${clip.fileName.substring(0, 20)}...`
+							: clip.fileName
+						: t("labels.audioAnnotationItem", { index: String(index + 1) }),
+					variant: "audio",
+				};
+			});
+
+		const blurs: TimelineRenderItem[] = blurRegions.map((region, index) => {
+			const span = mapSpanToTimeline(region.startMs, region.endMs);
+			return {
+				id: region.id,
+				rowId: BLUR_ROW_ID,
+				span: { start: span.start, end: span.end },
+				label: t("labels.blurItem", { index: String(index + 1) }),
+				variant: "blur",
+			};
+		});
+
+		const speeds: TimelineRenderItem[] = speedRegions.map((region, index) => {
+			const span = mapSpanToTimeline(region.startMs, region.endMs);
+			return {
+				id: region.id,
+				rowId: SPEED_ROW_ID,
+				span: { start: span.start, end: span.end },
+				label: t("labels.speedItem", { index: String(index + 1) }),
+				speedValue: region.speed,
+				variant: "speed",
+			};
+		});
+
+		const freezeAnnotations: TimelineRenderItem[] = annotationRegions
+			.filter((region) => region.freezeDuringAnnotation)
+			.map((region) => {
+				let label: string;
+
+				if (region.type === "text") {
+					const preview = region.content.trim() || t("labels.emptyText");
+					label = preview.length > 20 ? `${preview.substring(0, 20)}...` : preview;
+				} else if (region.type === "image") {
+					label = t("labels.imageItem");
+				} else {
+					label = t("labels.annotationItem");
+				}
+
+				const span = mapFreezeSpanToTimeline(region.startMs, region.endMs);
+				return {
+					id: region.id,
+					rowId: HOLD_ROW_ID,
+					span: { start: span.start, end: span.end },
+					label,
+					variant: "hold" as const,
+				};
+			});
+
+		const freezeAudioAnnotations: TimelineRenderItem[] = audioAnnotationClips
+			.filter((clip) => clip.freezeDuringAnnotation)
+			.map((clip, index) => {
+				const span = mapFreezeSpanToTimeline(clip.anchorMs, clip.anchorMs + clip.durationMs);
+				return {
+					id: clip.id,
+					rowId: HOLD_ROW_ID,
+					span: { start: span.start, end: span.end },
+					label: clip.fileName
+						? clip.fileName.length > 20
+							? `${clip.fileName.substring(0, 20)}...`
+							: clip.fileName
+						: t("labels.audioAnnotationItem", { index: String(index + 1) }),
+					variant: "audio",
+				};
+			});
+		return [
+			...zooms,
+			...trims,
+			...freezeAnnotations,
+			...freezeAudioAnnotations,
+			...annotations,
+			...audioAnnotations,
+			...blurs,
+			...speeds,
+		];
 	}, [
 		zoomRegions,
 		trimRegions,
@@ -1460,53 +1708,80 @@ export default function TimelineEditor({
 		audioAnnotationClips,
 		blurRegions,
 		speedRegions,
+		mapSpanToTimeline,
+		mapFreezeSpanToTimeline,
 		t,
 	]);
 
 	// Spans that participate in overlap resolution (clampToNeighbours). Annotation
 	// and blur are excluded since they may overlap and shouldn't constrain a drag.
 	const allRegionSpans = useMemo(() => {
-		const zooms = zoomRegions.map((r) => ({ id: r.id, start: r.startMs, end: r.endMs }));
-		const trims = trimRegions.map((r) => ({ id: r.id, start: r.startMs, end: r.endMs }));
-		const speeds = speedRegions.map((r) => ({ id: r.id, start: r.startMs, end: r.endMs }));
+		const zooms = zoomRegions.map((r) => {
+			const span = mapSpanToTimeline(r.startMs, r.endMs);
+			return { id: r.id, start: span.start, end: span.end };
+		});
+		const trims = trimRegions.map((r) => {
+			const span = mapSpanToTimeline(r.startMs, r.endMs);
+			return { id: r.id, start: span.start, end: span.end };
+		});
+		const speeds = speedRegions.map((r) => {
+			const span = mapSpanToTimeline(r.startMs, r.endMs);
+			return { id: r.id, start: span.start, end: span.end };
+		});
 		return [...zooms, ...trims, ...speeds];
-	}, [zoomRegions, trimRegions, speedRegions]);
+	}, [zoomRegions, trimRegions, speedRegions, mapSpanToTimeline]);
 
-	// Snap targets whose edges pull during a snap but don't push anyone away.
+	// Freeze items snap to sibling freeze anchors while dragging in source mode.
 	const softSnapSpans = useMemo(() => {
-		const annotations = annotationRegions.map((r) => ({
-			id: r.id,
-			start: r.startMs,
-			end: r.endMs,
-		}));
-		const audioAnnotations = audioAnnotationClips.map((clip) => ({
-			id: clip.id,
-			start: clip.anchorMs,
-			end: clip.anchorMs + clip.durationMs,
-		}));
-		const blurs = blurRegions.map((r) => ({ id: r.id, start: r.startMs, end: r.endMs }));
-		return [...annotations, ...audioAnnotations, ...blurs];
-	}, [annotationRegions, audioAnnotationClips, blurRegions]);
+		if (usesOutputTimelineAxis) {
+			return [] as { id: string; start: number; end: number }[];
+		}
+
+		const spans: { id: string; start: number; end: number }[] = [];
+		for (const region of annotationRegions) {
+			if (!region.freezeDuringAnnotation) {
+				continue;
+			}
+			spans.push({ id: region.id, start: region.startMs, end: region.endMs });
+		}
+		for (const clip of audioAnnotationClips) {
+			if (!clip.freezeDuringAnnotation) {
+				continue;
+			}
+			spans.push({
+				id: clip.id,
+				start: clip.anchorMs,
+				end: clip.anchorMs + clip.durationMs,
+			});
+		}
+		return spans;
+	}, [usesOutputTimelineAxis, annotationRegions, audioAnnotationClips]);
 
 	const keyframeTimesMs = useMemo(() => keyframes.map((kf) => kf.time), [keyframes]);
 
 	const handleItemSpanChange = useCallback(
 		(id: string, span: Span) => {
+			if (timelineReadOnly) {
+				return;
+			}
+			const sourceSpan = toSourceSpanFromTimeline(id, span);
+
 			if (zoomRegions.some((r) => r.id === id)) {
-				onZoomSpanChange(id, span);
+				onZoomSpanChange(id, sourceSpan);
 			} else if (trimRegions.some((r) => r.id === id)) {
-				onTrimSpanChange?.(id, span);
+				onTrimSpanChange?.(id, sourceSpan);
 			} else if (speedRegions.some((r) => r.id === id)) {
-				onSpeedSpanChange?.(id, span);
+				onSpeedSpanChange?.(id, sourceSpan);
 			} else if (annotationRegions.some((r) => r.id === id)) {
-				onAnnotationSpanChange?.(id, span);
+				onAnnotationSpanChange?.(id, sourceSpan);
 			} else if (audioAnnotationClips.some((clip) => clip.id === id)) {
-				onAudioAnnotationSpanChange?.(id, span);
+				onAudioAnnotationSpanChange?.(id, sourceSpan);
 			} else if (blurRegions.some((r) => r.id === id)) {
-				onBlurSpanChange?.(id, span);
+				onBlurSpanChange?.(id, sourceSpan);
 			}
 		},
 		[
+			toSourceSpanFromTimeline,
 			zoomRegions,
 			trimRegions,
 			speedRegions,
@@ -1519,6 +1794,7 @@ export default function TimelineEditor({
 			onAnnotationSpanChange,
 			onAudioAnnotationSpanChange,
 			onBlurSpanChange,
+			timelineReadOnly,
 		],
 	);
 
@@ -1548,6 +1824,7 @@ export default function TimelineEditor({
 				<div className="flex items-center gap-0.5 rounded-xl border border-white/[0.06] bg-white/[0.025] p-0.5">
 					<Button
 						onClick={handleAddZoom}
+						disabled={timelineReadOnly}
 						variant="ghost"
 						size="icon"
 						className="h-7 w-7 rounded-lg text-slate-400 hover:text-[#34B27B] hover:bg-[#34B27B]/10 transition-all"
@@ -1583,6 +1860,7 @@ export default function TimelineEditor({
 					</Button>
 					<Button
 						onClick={handleAddTrim}
+						disabled={timelineReadOnly}
 						variant="ghost"
 						size="icon"
 						className="h-7 w-7 rounded-lg text-slate-400 hover:text-[#ef4444] hover:bg-[#ef4444]/10 transition-all"
@@ -1591,13 +1869,14 @@ export default function TimelineEditor({
 						<Scissors className="w-4 h-4" />
 					</Button>
 					<AddPositionAnnotationMenu
-						disabled={!videoDuration || videoDuration === 0}
+						disabled={timelineReadOnly || !videoDuration || videoDuration === 0}
 						variant="icon"
 						onAdd={({ type }) => handleAddAnnotation(type)}
 						onImportAudio={onImportAudio}
 					/>
 					<Button
 						onClick={handleAddSpeed}
+						disabled={timelineReadOnly}
 						variant="ghost"
 						size="icon"
 						className="h-7 w-7 rounded-lg text-slate-400 hover:text-[#d97706] hover:bg-[#d97706]/10 transition-all"
@@ -1644,6 +1923,46 @@ export default function TimelineEditor({
 						</DropdownMenuContent>
 					</DropdownMenu>
 				</div>
+				{hasFreezeTimeline && onPlaybackModeChange && (
+					<div className="flex items-center gap-0.5 rounded-xl border border-white/[0.06] bg-white/[0.025] p-0.5">
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => onPlaybackModeChange("source")}
+							className={cn(
+								"h-7 rounded-lg px-2.5 text-[11px] font-medium transition-all",
+								playbackMode === "source"
+									? "bg-white/10 text-slate-100"
+									: "text-slate-500 hover:text-slate-300",
+							)}
+						>
+							{t("playbackMode.source")}
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => onPlaybackModeChange("preview")}
+							className={cn(
+								"h-7 rounded-lg px-2.5 text-[11px] font-medium transition-all",
+								playbackMode === "preview"
+									? "bg-[#B4A046]/20 text-[#B4A046]"
+									: "text-slate-500 hover:text-slate-300",
+							)}
+						>
+							{t("playbackMode.preview")}
+						</Button>
+					</div>
+				)}
+				{usesOutputTimelineAxis && (
+					<span className="text-[10px] tabular-nums text-slate-500">
+						{t("playbackMode.sourceTime", {
+							current: formatTimelineClock(currentTimeMs),
+							total: formatTimelineClock(sourceDurationMs),
+						})}
+					</span>
+				)}
 				<div className="flex-1" />
 				<div className="hidden md:flex items-center gap-3 text-[10px] text-slate-500 font-medium">
 					<span className="flex items-center gap-1.5">
@@ -1675,8 +1994,9 @@ export default function TimelineEditor({
 					onItemSpanChange={handleItemSpanChange}
 					allRegionSpans={allRegionSpans}
 					softSnapSpans={softSnapSpans}
-					currentTimeMs={currentTimeMs}
+					currentTimeMs={timelinePlayheadMs}
 					keyframeTimesMs={keyframeTimesMs}
+					readOnly={timelineReadOnly}
 				>
 					<KeyframeMarkers
 						keyframes={keyframes}
@@ -1689,8 +2009,9 @@ export default function TimelineEditor({
 					<Timeline
 						items={timelineItems}
 						videoDurationMs={totalMs}
-						currentTimeMs={currentTimeMs}
-						onSeek={onSeek}
+						currentTimeMs={timelinePlayheadMs}
+						timelineReadOnly={timelineReadOnly}
+						onSeek={handleAxisSeek}
 						onRangeChange={setRange}
 						onSelectZoom={onSelectZoom}
 						onSelectTrim={onSelectTrim}
@@ -1706,7 +2027,7 @@ export default function TimelineEditor({
 						selectedSpeedId={selectedSpeedId}
 						keyframes={keyframes}
 						videoUrl={videoUrl}
-						showTrimWaveform={showTrimWaveform}
+						showTrimWaveform={showTrimWaveform && !usesOutputTimelineAxis}
 					/>
 				</TimelineWrapper>
 			</div>

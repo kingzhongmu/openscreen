@@ -128,6 +128,7 @@
 		"duration": "持续时长",
 		"freezeDuringAnnotation": "批注期间定帧画面",
 		"freezeDuringAnnotationHint": "在锚点处暂停视频，批注显示期间画面保持静止。",
+		"previewModeReadOnly": "预览模式下不可编辑，请切换到「源视频」模式后再修改。",
 		"holdDuration": "定帧时长",
 		"typeText": "文本",
 		"typeImage": "图片",

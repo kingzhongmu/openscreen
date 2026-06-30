@@ -20,6 +20,7 @@ interface TimelineWrapperProps {
 	minItemDurationMs: number;
 	minVisibleRangeMs: number;
 	gridSizeMs?: number;
+	readOnly?: boolean;
 	onItemSpanChange: (id: string, span: Span) => void;
 	// Hard overlap constraints (zoom/trim/speed), used by clampToNeighbours and as snap targets.
 	allRegionSpans?: { id: string; start: number; end: number }[];
@@ -101,6 +102,7 @@ export default function TimelineWrapper({
 	softSnapSpans = [],
 	currentTimeMs,
 	keyframeTimesMs = [],
+	readOnly = false,
 }: TimelineWrapperProps) {
 	const totalMs = Math.max(0, Math.round(videoDuration * 1000));
 
@@ -328,6 +330,7 @@ export default function TimelineWrapper({
 
 	const onResizeEnd = useCallback(
 		(event: ResizeEndEvent) => {
+			if (readOnly) return;
 			const updatedSpan = event.active.data.current.getSpanFromResizeEvent?.(event);
 			if (!updatedSpan) return;
 
@@ -365,11 +368,13 @@ export default function TimelineWrapper({
 			onItemSpanChange,
 			snapSpanToTargets,
 			totalMs,
+			readOnly,
 		],
 	);
 
 	const onDragEnd = useCallback(
 		(event: DragEndEvent) => {
+			if (readOnly) return;
 			const activeRowId = event.over?.id as string;
 			const updatedSpan = event.active.data.current.getSpanFromDragEvent?.(event);
 			if (!updatedSpan || !activeRowId) return;
@@ -389,7 +394,14 @@ export default function TimelineWrapper({
 
 			onItemSpanChange(activeItemId, clampedSpan);
 		},
-		[clampSpanToBounds, clampToNeighbours, hasOverlap, onItemSpanChange, snapSpanToTargets],
+		[
+			clampSpanToBounds,
+			clampToNeighbours,
+			hasOverlap,
+			onItemSpanChange,
+			readOnly,
+			snapSpanToTargets,
+		],
 	);
 
 	// Drag/resize tooltip (direct DOM updates, no re-renders)

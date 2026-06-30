@@ -1,5 +1,6 @@
 import { WebDemuxer } from "web-demuxer";
 import type { SpeedRegion, TrimRegion } from "@/components/video-editor/types";
+import { getMergedHoldOutputDurationMs } from "@/lib/timelineMapping";
 
 const SOURCE_LOAD_TIMEOUT_MS = 60_000;
 const EPSILON_SEC = 0.001;
@@ -680,8 +681,7 @@ export class StreamingVideoDecoder {
 		if (!this.metadata) throw new Error("Must call loadMetadata() first");
 		const trimSegments = this.computeSegments(this.metadata.duration, trimRegions);
 		const segments = this.splitBySpeed(trimSegments, speedRegions);
-		const holdDurationSec =
-			(holdRegions?.reduce((sum, hold) => sum + hold.holdDurationMs, 0) ?? 0) / 1000;
+		const holdDurationSec = (holdRegions ? getMergedHoldOutputDurationMs(holdRegions) : 0) / 1000;
 		const holdFrames = Math.round(holdDurationSec * targetFrameRate);
 		const baseDuration = segments.reduce(
 			(sum, seg) => sum + (seg.endSec - seg.startSec) / seg.speed,

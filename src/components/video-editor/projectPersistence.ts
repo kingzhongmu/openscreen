@@ -3,7 +3,7 @@ import { normalizePersistedAudioUrl } from "@/lib/audioAnnotationPersistence";
 import { normalizeBlurColor, normalizeBlurType } from "@/lib/blurEffects";
 import { normalizeCursorThemeId } from "@/lib/cursor/cursorThemes";
 import type { ExportFormat, ExportQuality, GifFrameRate, GifSizePreset } from "@/lib/exporter";
-import { syncHoldRegionsFromEditor } from "@/lib/holdRegions";
+import { alignAllFreezeAnchors, syncHoldRegionsFromEditor } from "@/lib/holdRegions";
 import type { ProjectMedia } from "@/lib/recordingSession";
 import { normalizeProjectMedia } from "@/lib/recordingSession";
 import { DEFAULT_WALLPAPER, WALLPAPER_PATHS } from "@/lib/wallpaper";
@@ -333,7 +333,14 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 						? Math.max(0, Math.round(clip.anchorMs))
 						: 0;
 					const rawDuration = isFiniteNumber(clip.durationMs) ? Math.round(clip.durationMs) : 3000;
-					const durationMs = Math.max(500, Math.min(30_000, rawDuration));
+					let durationMs = Math.max(500, Math.min(30_000, rawDuration));
+					if (clip.freezeDuringAnnotation && isFiniteNumber(clip.holdDurationMs)) {
+						const legacyHoldMs = Math.max(
+							MIN_HOLD_DURATION_MS,
+							Math.min(MAX_HOLD_DURATION_MS, Math.round(clip.holdDurationMs)),
+						);
+						durationMs = Math.max(durationMs, legacyHoldMs);
+					}
 					const volume =
 						isFiniteNumber(clip.volume) && clip.volume >= 0 && clip.volume <= 1 ? clip.volume : 1;
 
@@ -349,14 +356,6 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 							: undefined,
 						volume,
 						...(clip.freezeDuringAnnotation ? { freezeDuringAnnotation: true as const } : {}),
-						...(clip.freezeDuringAnnotation && isFiniteNumber(clip.holdDurationMs)
-							? {
-									holdDurationMs: Math.max(
-										MIN_HOLD_DURATION_MS,
-										Math.min(MAX_HOLD_DURATION_MS, Math.round(clip.holdDurationMs)),
-									),
-								}
-							: {}),
 					};
 				})
 		: [];
@@ -370,7 +369,14 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 					const rawStart = isFiniteNumber(region.startMs) ? Math.round(region.startMs) : 0;
 					const rawEnd = isFiniteNumber(region.endMs) ? Math.round(region.endMs) : rawStart + 1000;
 					const startMs = Math.max(0, Math.min(rawStart, rawEnd));
-					const endMs = Math.max(startMs + 1, rawEnd);
+					let endMs = Math.max(startMs + 1, rawEnd);
+					if (region.freezeDuringAnnotation && isFiniteNumber(region.holdDurationMs)) {
+						const legacyHoldMs = Math.max(
+							MIN_HOLD_DURATION_MS,
+							Math.min(MAX_HOLD_DURATION_MS, Math.round(region.holdDurationMs)),
+						);
+						endMs = Math.max(endMs, startMs + legacyHoldMs);
+					}
 					const blurShape =
 						typeof region.blurData?.shape === "string" &&
 						VALID_BLUR_SHAPES.has(region.blurData.shape)
@@ -474,21 +480,16 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 									}
 								: undefined,
 						...(region.freezeDuringAnnotation ? { freezeDuringAnnotation: true as const } : {}),
-						...(region.freezeDuringAnnotation && isFiniteNumber(region.holdDurationMs)
-							? {
-									holdDurationMs: Math.max(
-										MIN_HOLD_DURATION_MS,
-										Math.min(MAX_HOLD_DURATION_MS, Math.round(region.holdDurationMs)),
-									),
-								}
-							: {}),
 					};
 				})
 		: [];
 
+	const { annotations: alignedAnnotationRegions, audioClips: alignedAudioAnnotationClips } =
+		alignAllFreezeAnchors(normalizedAnnotationRegions, normalizedAudioAnnotationClips);
+
 	const normalizedHoldRegions: HoldRegion[] = syncHoldRegionsFromEditor(
-		normalizedAnnotationRegions,
-		normalizedAudioAnnotationClips,
+		alignedAnnotationRegions,
+		alignedAudioAnnotationClips,
 		Array.isArray(editor.holdRegions)
 			? editor.holdRegions
 					.filter((hold): hold is HoldRegion => Boolean(hold && typeof hold.id === "string"))
@@ -576,8 +577,8 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 		autoFocusAll: typeof editor.autoFocusAll === "boolean" ? editor.autoFocusAll : false,
 		trimRegions: normalizedTrimRegions,
 		speedRegions: normalizedSpeedRegions,
-		annotationRegions: normalizedAnnotationRegions,
-		audioAnnotationClips: normalizedAudioAnnotationClips,
+		annotationRegions: alignedAnnotationRegions,
+		audioAnnotationClips: alignedAudioAnnotationClips,
 		holdRegions: normalizedHoldRegions,
 		aspectRatio: normalizedAspectRatio,
 		webcamLayoutPreset: normalizedWebcamLayoutPreset,

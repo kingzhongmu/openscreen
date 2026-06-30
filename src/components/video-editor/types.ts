@@ -321,6 +321,9 @@ export interface HoldRegion {
 export const MIN_HOLD_DURATION_MS = 500;
 export const MAX_HOLD_DURATION_MS = 30_000;
 
+/** Source = edit on raw video timeline; preview = output clock with freeze inserts (read-only edit). */
+export type EditorPlaybackMode = "source" | "preview";
+
 export interface AnnotationRegion {
 	id: string;
 	startMs: number;

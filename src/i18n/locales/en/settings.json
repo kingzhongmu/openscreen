@@ -129,6 +129,7 @@
 		"duration": "Duration",
 		"freezeDuringAnnotation": "Freeze frame during annotation",
 		"freezeDuringAnnotationHint": "Pause the video at the anchor while the annotation is shown.",
+		"previewModeReadOnly": "Preview mode — switch to Source to edit annotations and timeline.",
 		"holdDuration": "Hold duration",
 		"typeText": "Text",
 		"typeImage": "Image",

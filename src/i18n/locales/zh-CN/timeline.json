@@ -13,7 +13,14 @@
 		"pressAnnotation": "按 A 添加标注",
 		"pressAudioAnnotation": "在播放头处导入音频",
 		"pressSpeed": "按 S 添加速度",
-		"pressBlur": "按 B 添加模糊区域"
+		"pressBlur": "按 B 添加模糊区域",
+		"holdSegments": "定帧批注（源视频时间轴）"
+	},
+	"playbackMode": {
+		"source": "源视频",
+		"preview": "预览",
+		"outputTime": "成片 {{current}} / {{total}}",
+		"sourceTime": "源 {{current}} / {{total}}"
 	},
 	"labels": {
 		"pan": "平移",
@@ -27,7 +34,8 @@
 		"audioAnnotationItem": "音频 {{index}}",
 		"imageItem": "图片",
 		"emptyText": "空文本",
-		"blurItem": "模糊 {{index}}"
+		"blurItem": "模糊 {{index}}",
+		"holdSegment": "定帧"
 	},
 	"emptyState": {
 		"noVideo": "未加载视频",

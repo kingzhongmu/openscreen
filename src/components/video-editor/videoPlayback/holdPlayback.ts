@@ -1,5 +1,10 @@
 import type { HoldRegion } from "@/components/video-editor/types";
-import { getOutputDurationMs, outputToSourceMs, sourceToOutputMs } from "@/lib/timelineMapping";
+import {
+	computeHoldOutputSegments,
+	getOutputDurationMs,
+	outputToSourceMs,
+	sourceToOutputMs,
+} from "@/lib/timelineMapping";
 
 export interface HoldPlaybackTick {
 	sourceMs: number;
@@ -15,7 +20,7 @@ export function createHoldPlaybackClock(holdRegions: HoldRegion[], sourceDuratio
 
 	return {
 		resetFromSource(sourceMs: number, nowMs = performance.now()) {
-			const mappedOutputMs = sourceToOutputMs(sourceMs, holdRegions);
+			const mappedOutputMs = sourceToOutputMs(sourceMs, holdRegions, sourceDurationMs);
 			outputTimeMs = Math.max(0, Math.min(mappedOutputMs, maxOutputMs));
 			lastTickMs = nowMs;
 		},
@@ -29,7 +34,7 @@ export function createHoldPlaybackClock(holdRegions: HoldRegion[], sourceDuratio
 			outputTimeMs = Math.min(maxOutputMs, outputTimeMs + deltaMs);
 
 			return {
-				sourceMs: outputToSourceMs(outputTimeMs, holdRegions),
+				sourceMs: outputToSourceMs(outputTimeMs, holdRegions, sourceDurationMs),
 				outputMs: outputTimeMs,
 				finished: outputTimeMs >= maxOutputMs,
 			};
@@ -42,8 +47,9 @@ export function createHoldPlaybackClock(holdRegions: HoldRegion[], sourceDuratio
 export function resolveAudioAnnotationOutputAnchorMs(
 	anchorMs: number,
 	holdRegions: HoldRegion[],
+	sourceDurationMs?: number,
 ): number {
-	return sourceToOutputMs(anchorMs, holdRegions);
+	return sourceToOutputMs(anchorMs, holdRegions, sourceDurationMs);
 }
 
 /** Timeline clock for overlay animations (arrows, text) during hold segments. */
@@ -51,25 +57,28 @@ export function resolveAnnotationAnimationTimeMs(
 	outputMs: number,
 	annotationStartMs: number,
 	holdRegions: HoldRegion[],
+	sourceDurationMs?: number,
 ): number {
 	if (holdRegions.length === 0) {
 		return outputMs;
 	}
 
-	const holdOutputStart = sourceToOutputMs(annotationStartMs, holdRegions);
+	const holdSegment = computeHoldOutputSegments(holdRegions).find(
+		(segment) => segment.sourceMs === annotationStartMs,
+	);
+	const holdOutputStart =
+		holdSegment?.outputStart ?? sourceToOutputMs(annotationStartMs, holdRegions, sourceDurationMs);
 	if (outputMs < holdOutputStart) {
-		return outputToSourceMs(outputMs, holdRegions);
+		return outputToSourceMs(outputMs, holdRegions, sourceDurationMs);
 	}
 
-	const hold = holdRegions.find((region) => region.sourceMs === annotationStartMs);
-	if (!hold) {
-		return outputToSourceMs(outputMs, holdRegions);
+	if (!holdSegment) {
+		return outputToSourceMs(outputMs, holdRegions, sourceDurationMs);
 	}
 
-	const holdOutputEnd = holdOutputStart + hold.holdDurationMs;
-	if (outputMs < holdOutputEnd) {
+	if (outputMs < holdSegment.outputEnd) {
 		return annotationStartMs + (outputMs - holdOutputStart);
 	}
 
-	return outputToSourceMs(outputMs, holdRegions);
+	return outputToSourceMs(outputMs, holdRegions, sourceDurationMs);
 }

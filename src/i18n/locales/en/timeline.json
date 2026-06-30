@@ -17,7 +17,14 @@
 		"pressAnnotation": "Press A to add annotation",
 		"pressAudioAnnotation": "Import audio at playhead",
 		"pressBlur": "Press B to add blur region",
-		"pressSpeed": "Press S to add speed"
+		"pressSpeed": "Press S to add speed",
+		"holdSegments": "Freeze-frame annotations (source timeline)"
+	},
+	"playbackMode": {
+		"source": "Source",
+		"preview": "Preview",
+		"outputTime": "Output {{current}} / {{total}}",
+		"sourceTime": "Source {{current}} / {{total}}"
 	},
 	"labels": {
 		"pan": "Pan",
@@ -31,7 +38,8 @@
 		"audioAnnotationItem": "Audio {{index}}",
 		"blurItem": "Blur {{index}}",
 		"imageItem": "Image",
-		"emptyText": "Empty text"
+		"emptyText": "Empty text",
+		"holdSegment": "Freeze"
 	},
 	"emptyState": {
 		"noVideo": "No Video Loaded",

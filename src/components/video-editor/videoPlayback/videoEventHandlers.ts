@@ -1,6 +1,6 @@
 import type React from "react";
-import { isOutputTimeInHold } from "@/lib/timelineMapping";
-import type { HoldRegion, SpeedRegion, TrimRegion } from "../types";
+import { isOutputTimeInHold, sourceToOutputMs } from "@/lib/timelineMapping";
+import type { EditorPlaybackMode, HoldRegion, SpeedRegion, TrimRegion } from "../types";
 import { createHoldPlaybackClock } from "./holdPlayback";
 import { holdPlaybackLog } from "./holdPlaybackDebug";
 
@@ -22,6 +22,7 @@ interface VideoEventHandlersParams {
 	trimRegionsRef: React.MutableRefObject<TrimRegion[]>;
 	speedRegionsRef: React.MutableRefObject<SpeedRegion[]>;
 	holdRegionsRef: React.MutableRefObject<HoldRegion[]>;
+	playbackModeRef: React.MutableRefObject<EditorPlaybackMode>;
 	sourceDurationMsRef: React.MutableRefObject<number>;
 	isScrubbingRef?: React.MutableRefObject<boolean>;
 	scrubEndTimerRef?: React.MutableRefObject<number | null>;
@@ -44,6 +45,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 		trimRegionsRef,
 		speedRegionsRef,
 		holdRegionsRef,
+		playbackModeRef,
 		sourceDurationMsRef,
 		isScrubbingRef,
 		scrubEndTimerRef,
@@ -61,14 +63,22 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 		}
 	};
 
+	const resolveOutputMsForSource = (sourceSec: number) => {
+		if (!hasHoldRegions()) {
+			return Math.round(sourceSec * 1000);
+		}
+		return sourceToOutputMs(
+			Math.round(sourceSec * 1000),
+			holdRegionsRef.current,
+			sourceDurationMsRef.current,
+		);
+	};
+
 	const emitTime = (timeValue: number, outputTimeMs?: number) => {
 		currentTimeRef.current = timeValue * 1000;
-		if (outputTimeMs !== undefined) {
-			outputTimeRef.current = outputTimeMs;
-		} else {
-			outputTimeRef.current = timeValue * 1000;
-		}
-		onTimeUpdate(timeValue, outputTimeMs);
+		const resolvedOutput = outputTimeMs ?? resolveOutputMsForSource(timeValue);
+		outputTimeRef.current = resolvedOutput;
+		onTimeUpdate(timeValue, resolvedOutput);
 		onAfterTimeUpdate?.();
 	};
 
@@ -91,6 +101,8 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 
 	const hasHoldRegions = () => holdRegionsRef.current.length > 0;
 
+	const shouldUseHoldPlayback = () => hasHoldRegions() && playbackModeRef.current === "preview";
+
 	const resolveSourceMsForClockReset = () => {
 		const fromVideo =
 			Number.isFinite(video.currentTime) && video.currentTime >= 0
@@ -100,7 +112,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 	};
 
 	const ensureHoldClock = () => {
-		if (!hasHoldRegions()) {
+		if (!shouldUseHoldPlayback()) {
 			holdClock = null;
 			holdClockKey = "";
 			return null;
@@ -173,7 +185,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 		const activeSpeedRegion = findActiveSpeedRegion(clampedSourceMs);
 		const resolvedOutputMs = outputMs ?? holdClock?.getOutputTimeMs() ?? clampedSourceMs;
 		const inHoldOutput =
-			hasHoldRegions() && isOutputTimeInHold(resolvedOutputMs, holdRegionsRef.current);
+			shouldUseHoldPlayback() && isOutputTimeInHold(resolvedOutputMs, holdRegionsRef.current);
 
 		// Only freeze native advancement during hold segments. playbackRate=0 for the
 		// entire timeline prevents intermediate seeks from updating decoded frames.
@@ -201,7 +213,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 	function updateTime() {
 		if (!video) return;
 
-		if (hasHoldRegions()) {
+		if (shouldUseHoldPlayback()) {
 			const clock = ensureHoldClock();
 			if (!clock) {
 				return;
@@ -256,7 +268,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 			return;
 		}
 
-		if (hasHoldRegions()) {
+		if (shouldUseHoldPlayback()) {
 			const clock = ensureHoldClock();
 			const resetSourceMs = resolveSourceMsForClockReset();
 			clock?.resetFromSource(resetSourceMs);
@@ -282,7 +294,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 
 	const handlePause = () => {
 		isPlayingRef.current = false;
-		if (hasHoldRegions()) {
+		if (shouldUseHoldPlayback()) {
 			const activeSpeedRegion = findActiveSpeedRegion(video.currentTime * 1000);
 			video.playbackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1;
 			holdPlaybackLog("pause", {
@@ -312,7 +324,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 			}, SCRUB_END_DEBOUNCE_MS);
 		}
 
-		if (hasHoldRegions() && !wasHoldSeek) {
+		if (shouldUseHoldPlayback() && !wasHoldSeek) {
 			const clock = ensureHoldClock();
 			const resetSourceMs = resolveSourceMsForClockReset();
 			clock?.resetFromSource(resetSourceMs);
@@ -368,7 +380,7 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 			video.pause();
 		}
 
-		if (hasHoldRegions()) {
+		if (shouldUseHoldPlayback()) {
 			const clock = ensureHoldClock();
 			const resetSourceMs = resolveSourceMsForClockReset();
 			clock?.resetFromSource(resetSourceMs);

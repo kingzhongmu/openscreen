@@ -5,7 +5,12 @@ import {
 	computeArrowGeometry,
 	normalizeFigureData,
 } from "@/components/video-editor/arrowGeometry";
-import { type AnnotationRegion, type FigureData } from "@/components/video-editor/types";
+import {
+	type AnnotationRegion,
+	type FigureData,
+	type HoldRegion,
+} from "@/components/video-editor/types";
+import { resolveAnnotationAnimationTimeMs } from "@/components/video-editor/videoPlayback/holdPlayback";
 import { getTextAnimationState } from "@/lib/annotationTextAnimation";
 import { getArrowAnimationState } from "@/lib/arrowAnimation";
 import {
@@ -15,6 +20,10 @@ import {
 	getNormalizedMosaicBlockSize,
 	normalizeBlurType,
 } from "@/lib/blurEffects";
+import {
+	isFreezeLinkedRegionVisibleAtOutputTime,
+	isRegionVisibleAtOutputTime,
+} from "@/lib/timelineMapping";
 
 let blurScratchCanvas: HTMLCanvasElement | null = null;
 let blurScratchCtx: CanvasRenderingContext2D | null = null;
@@ -435,15 +444,36 @@ export async function renderAnnotations(
 	canvasHeight: number,
 	currentTimeMs: number,
 	scaleFactor: number = 1.0,
+	options?: {
+		holdRegions?: HoldRegion[];
+		outputTimeMs?: number;
+	},
 ): Promise<void> {
-	const activeAnnotations = annotations.filter(
-		(ann) => currentTimeMs >= ann.startMs && currentTimeMs < ann.endMs,
-	);
+	const holdRegions = options?.holdRegions ?? [];
+	const outputTimeMs = options?.outputTimeMs ?? currentTimeMs;
+	const activeAnnotations = annotations.filter((ann) => {
+		if (holdRegions.length === 0) {
+			return currentTimeMs >= ann.startMs && currentTimeMs < ann.endMs;
+		}
+		if (ann.freezeDuringAnnotation) {
+			return isFreezeLinkedRegionVisibleAtOutputTime(
+				outputTimeMs,
+				ann.startMs,
+				ann.endMs,
+				holdRegions,
+			);
+		}
+		return isRegionVisibleAtOutputTime(outputTimeMs, ann.startMs, ann.endMs, holdRegions);
+	});
 
 	// Lower z-index first so higher draws on top
 	const sortedAnnotations = [...activeAnnotations].sort((a, b) => a.zIndex - b.zIndex);
 
 	for (const annotation of sortedAnnotations) {
+		const animationTimeMs =
+			holdRegions.length > 0
+				? resolveAnnotationAnimationTimeMs(outputTimeMs, annotation.startMs, holdRegions)
+				: currentTimeMs;
 		const x = (annotation.position.x / 100) * canvasWidth;
 		const y = (annotation.position.y / 100) * canvasHeight;
 		const width = (annotation.size.width / 100) * canvasWidth;
@@ -451,7 +481,7 @@ export async function renderAnnotations(
 
 		switch (annotation.type) {
 			case "text":
-				renderText(ctx, annotation, x, y, width, height, scaleFactor, currentTimeMs);
+				renderText(ctx, annotation, x, y, width, height, scaleFactor, animationTimeMs);
 				break;
 
 			case "image":
@@ -464,7 +494,7 @@ export async function renderAnnotations(
 						ctx,
 						annotation.figureData,
 						annotation.startMs,
-						currentTimeMs,
+						animationTimeMs,
 						x,
 						y,
 						width,

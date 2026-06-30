@@ -66,9 +66,10 @@ import {
 	VideoExporter,
 } from "@/lib/exporter";
 import { computeFrameStepTime } from "@/lib/frameStep";
-import { syncHoldRegionsFromEditor } from "@/lib/holdRegions";
+import { alignAllFreezeAnchors, syncHoldRegionsFromEditor } from "@/lib/holdRegions";
 import type { CursorCaptureMode, ProjectMedia } from "@/lib/recordingSession";
 import { matchesShortcut } from "@/lib/shortcuts";
+import { getOutputDurationMs, sourceToOutputMs } from "@/lib/timelineMapping";
 import {
 	getExportFolder,
 	getProjectFolder,
@@ -98,6 +99,7 @@ import {
 	buildPositionAnnotationRegion,
 	computePositionAnnotationSpan,
 	DEFAULT_POSITION_ANNOTATION_DURATION_MS,
+	MIN_POSITION_ANNOTATION_DURATION_MS,
 } from "./positionAnnotation";
 import {
 	createProjectData,
@@ -120,6 +122,7 @@ import {
 	DEFAULT_BLUR_DATA,
 	DEFAULT_PLAYBACK_SPEED,
 	DEFAULT_ZOOM_DEPTH,
+	type EditorPlaybackMode,
 	type FigureData,
 	type PlaybackSpeed,
 	type Rotation3DPreset,
@@ -200,8 +203,10 @@ function withSyncedHoldRegions(
 	prev: EditorState,
 	updates: Partial<Pick<EditorState, "annotationRegions" | "audioAnnotationClips">>,
 ): Partial<EditorState> {
-	const annotationRegions = updates.annotationRegions ?? prev.annotationRegions;
-	const audioAnnotationClips = updates.audioAnnotationClips ?? prev.audioAnnotationClips;
+	const rawAnnotations = updates.annotationRegions ?? prev.annotationRegions;
+	const rawClips = updates.audioAnnotationClips ?? prev.audioAnnotationClips;
+	const { annotations: annotationRegions, audioClips: audioAnnotationClips } =
+		alignAllFreezeAnchors(rawAnnotations, rawClips);
 	return {
 		...updates,
 		annotationRegions,
@@ -261,6 +266,8 @@ export default function VideoEditor() {
 	const [error, setError] = useState<string | null>(null);
 	const [isPlaying, setIsPlaying] = useState(false);
 	const [currentTime, setCurrentTime] = useState(0);
+	const [outputPlaybackTimeMs, setOutputPlaybackTimeMs] = useState(0);
+	const [playbackMode, setPlaybackMode] = useState<EditorPlaybackMode>("source");
 	const [duration, setDuration] = useState(0);
 	const currentTimeRef = useRef(currentTime);
 	currentTimeRef.current = currentTime;
@@ -1065,6 +1072,63 @@ export default function VideoEditor() {
 		video.currentTime = time;
 	}
 
+	const handleTimeUpdate = useCallback(
+		(time: number, outputTimeMs?: number) => {
+			setCurrentTime(time);
+			if (holdRegions.length > 0) {
+				setOutputPlaybackTimeMs(
+					outputTimeMs ?? sourceToOutputMs(Math.round(time * 1000), holdRegions),
+				);
+			}
+		},
+		[holdRegions],
+	);
+
+	const handleTimelineSeek = useCallback(
+		(timeSec: number) => {
+			const video = videoPlaybackRef.current?.video;
+			if (!video) return;
+
+			video.currentTime = timeSec;
+			if (holdRegions.length > 0) {
+				setOutputPlaybackTimeMs(sourceToOutputMs(Math.round(timeSec * 1000), holdRegions));
+			}
+		},
+		[holdRegions],
+	);
+
+	const handlePlaybackModeChange = useCallback(
+		(mode: EditorPlaybackMode) => {
+			if (mode === playbackMode) {
+				return;
+			}
+			videoPlaybackRef.current?.pause();
+			setIsPlaying(false);
+			setPlaybackMode(mode);
+			if (holdRegions.length > 0) {
+				const sourceMs = Math.round(currentTime * 1000);
+				setOutputPlaybackTimeMs(sourceToOutputMs(sourceMs, holdRegions));
+			}
+		},
+		[playbackMode, holdRegions, currentTime],
+	);
+
+	useEffect(() => {
+		if (holdRegions.length === 0 && playbackMode !== "source") {
+			setPlaybackMode("source");
+		}
+	}, [holdRegions.length, playbackMode]);
+
+	const outputDurationMs = useMemo(
+		() =>
+			holdRegions.length > 0
+				? getOutputDurationMs(Math.round(duration * 1000), holdRegions)
+				: Math.round(duration * 1000),
+		[duration, holdRegions],
+	);
+
+	const timelineReadOnly = holdRegions.length > 0 && playbackMode === "preview";
+
 	const selectTimelineItem = useCallback(
 		(
 			item:
@@ -1512,6 +1576,8 @@ export default function VideoEditor() {
 
 	const handleAnnotationSpanChange = useCallback(
 		(id: string, span: Span) => {
+			const startMs = Math.round(span.start);
+			const endMs = Math.max(startMs + MIN_POSITION_ANNOTATION_DURATION_MS, Math.round(span.end));
 			pushState((prev) => {
 				const editedAutoCaption =
 					prev.annotationRegions.find((region) => region.id === id)?.annotationSource ===
@@ -1520,8 +1586,8 @@ export default function VideoEditor() {
 					region.id === id
 						? {
 								...region,
-								startMs: Math.round(span.start),
-								endMs: Math.round(span.end),
+								startMs,
+								endMs,
 							}
 						: region,
 				);
@@ -1573,18 +1639,6 @@ export default function VideoEditor() {
 					const { freezeDuringAnnotation: _freeze, holdDurationMs: _hold, ...rest } = region;
 					return rest;
 				});
-				return withSyncedHoldRegions(prev, { annotationRegions: next });
-			});
-		},
-		[pushState],
-	);
-
-	const handleAnnotationHoldDurationChange = useCallback(
-		(id: string, holdDurationMs: number) => {
-			pushState((prev) => {
-				const next = prev.annotationRegions.map((region) =>
-					region.id === id ? { ...region, holdDurationMs } : region,
-				);
 				return withSyncedHoldRegions(prev, { annotationRegions: next });
 			});
 		},
@@ -1700,19 +1754,6 @@ export default function VideoEditor() {
 						const { freezeDuringAnnotation: _freeze, holdDurationMs: _hold, ...rest } = clip;
 						return rest;
 					}),
-				}),
-			);
-		},
-		[pushState],
-	);
-
-	const handleAudioAnnotationHoldDurationChange = useCallback(
-		(id: string, holdDurationMs: number) => {
-			pushState((prev) =>
-				withSyncedHoldRegions(prev, {
-					audioAnnotationClips: prev.audioAnnotationClips.map((clip) =>
-						clip.id === id ? { ...clip, holdDurationMs } : clip,
-					),
 				}),
 			);
 		},
@@ -2976,7 +3017,7 @@ export default function VideoEditor() {
 													onWebcamPositionChange={(pos) => updateState({ webcamPosition: pos })}
 													onWebcamPositionDragEnd={commitState}
 													onDurationChange={setDuration}
-													onTimeUpdate={setCurrentTime}
+													onTimeUpdate={handleTimeUpdate}
 													currentTime={currentTime}
 													onPlayStateChange={setIsPlaying}
 													onError={setError}
@@ -3022,6 +3063,7 @@ export default function VideoEditor() {
 													cursorClipToBounds={cursorClipToBounds}
 													cursorTheme={cursorTheme}
 													isPreviewingZoom={isPreviewingZoom}
+													playbackMode={playbackMode}
 												/>
 											</div>
 										</div>
@@ -3195,13 +3237,11 @@ export default function VideoEditor() {
 										videoDurationMs={Math.round(duration * 1000)}
 										onAnnotationDurationChange={handleAnnotationDurationChange}
 										onAnnotationFreezeChange={handleAnnotationFreezeChange}
-										onAnnotationHoldDurationChange={handleAnnotationHoldDurationChange}
 										selectedAudioAnnotationId={selectedAudioAnnotationId}
 										audioAnnotationClips={audioAnnotationClips}
 										onAudioAnnotationVolumeChange={handleAudioAnnotationVolumeChange}
 										onAudioAnnotationDurationChange={handleAudioAnnotationDurationChange}
 										onAudioAnnotationFreezeChange={handleAudioAnnotationFreezeChange}
-										onAudioAnnotationHoldDurationChange={handleAudioAnnotationHoldDurationChange}
 										onAudioAnnotationReplace={handleAudioAnnotationReplace}
 										onAudioAnnotationDelete={handleAudioAnnotationDelete}
 										selectedBlurId={selectedBlurId}
@@ -3239,6 +3279,7 @@ export default function VideoEditor() {
 											hasNativeCursorRecordingData(cursorRecordingData)
 										}
 										showCursorSettings={showCursorSettings}
+										editorReadOnly={timelineReadOnly}
 									/>
 								</div>
 							</div>
@@ -3254,7 +3295,13 @@ export default function VideoEditor() {
 								<TimelineEditor
 									videoDuration={duration}
 									currentTime={currentTime}
-									onSeek={handleSeek}
+									outputPlaybackTimeMs={outputPlaybackTimeMs}
+									outputDurationMs={outputDurationMs}
+									playbackMode={playbackMode}
+									onPlaybackModeChange={handlePlaybackModeChange}
+									timelineReadOnly={timelineReadOnly}
+									holdRegions={holdRegions}
+									onSeek={handleTimelineSeek}
 									zoomRegions={zoomRegions}
 									onZoomAdded={handleZoomAdded}
 									autoZoomEnabled={autoZoomEnabled}

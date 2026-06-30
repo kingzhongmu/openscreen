@@ -56,6 +56,7 @@ interface AnnotationOverlayProps {
 	previewSourceCanvas?: PreviewCanvasSource | null;
 	previewFrameVersion?: number;
 	currentTimeMs: number;
+	interactionDisabled?: boolean;
 }
 
 export function AnnotationOverlay({
@@ -74,6 +75,7 @@ export function AnnotationOverlay({
 	previewSourceCanvas,
 	previewFrameVersion,
 	currentTimeMs,
+	interactionDisabled = false,
 }: AnnotationOverlayProps) {
 	const committedX = (annotation.position.x / 100) * containerWidth;
 	const committedY = (annotation.position.y / 100) * containerHeight;
@@ -544,6 +546,8 @@ export function AnnotationOverlay({
 		<Rnd
 			position={{ x, y }}
 			size={{ width, height }}
+			disableDragging={interactionDisabled || !isSelected || isSelectedFreehandBlur}
+			enableResizing={!interactionDisabled && isSelected && !isSelectedFreehandBlur}
 			onDragStart={() => {
 				isDraggingRef.current = true;
 			}}
@@ -627,8 +631,6 @@ export function AnnotationOverlay({
 				boxShadow:
 					isSelected && annotation.type !== "blur" ? "0 0 0 1px rgba(52, 178, 123, 0.35)" : "none",
 			}}
-			enableResizing={isSelected && !isSelectedFreehandBlur}
-			disableDragging={!isSelected || isSelectedFreehandBlur}
 			resizeHandleStyles={{
 				topLeft: {
 					width: "12px",

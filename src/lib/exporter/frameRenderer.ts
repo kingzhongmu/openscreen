@@ -102,6 +102,7 @@ interface FrameRenderConfig {
 	webcamSizePreset?: WebcamSizePreset;
 	webcamPosition?: { cx: number; cy: number } | null;
 	annotationRegions?: AnnotationRegion[];
+	holdRegions?: import("@/components/video-editor/types").HoldRegion[];
 	speedRegions?: SpeedRegion[];
 	previewWidth?: number;
 	previewHeight?: number;
@@ -375,6 +376,7 @@ export class FrameRenderer {
 		videoFrame: VideoFrame,
 		timestamp: number,
 		webcamFrame?: VideoFrame | null,
+		annotationOutputTimeMs?: number,
 	): Promise<void> {
 		if (!this.app || !this.videoContainer || !this.cameraContainer) {
 			throw new Error("Renderer not initialized");
@@ -466,6 +468,12 @@ export class FrameRenderer {
 				this.config.height,
 				timeMs,
 				scaleFactor,
+				this.config.holdRegions?.length
+					? {
+							holdRegions: this.config.holdRegions,
+							outputTimeMs: annotationOutputTimeMs ?? timeMs,
+						}
+					: undefined,
 			);
 		}
 

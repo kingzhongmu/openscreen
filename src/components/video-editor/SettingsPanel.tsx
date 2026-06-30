@@ -315,13 +315,11 @@ interface SettingsPanelProps {
 	videoDurationMs?: number;
 	onAnnotationDurationChange?: (id: string, durationMs: number) => void;
 	onAnnotationFreezeChange?: (id: string, enabled: boolean) => void;
-	onAnnotationHoldDurationChange?: (id: string, holdDurationMs: number) => void;
 	selectedAudioAnnotationId?: string | null;
 	audioAnnotationClips?: AudioAnnotationClip[];
 	onAudioAnnotationVolumeChange?: (id: string, volume: number) => void;
 	onAudioAnnotationDurationChange?: (id: string, durationMs: number) => void;
 	onAudioAnnotationFreezeChange?: (id: string, enabled: boolean) => void;
-	onAudioAnnotationHoldDurationChange?: (id: string, holdDurationMs: number) => void;
 	onAudioAnnotationReplace?: (
 		id: string,
 		audioUrl: string,
@@ -368,6 +366,7 @@ interface SettingsPanelProps {
 	onCursorThemeChange?: (theme: string) => void;
 	hasCursorData?: boolean;
 	showCursorSettings?: boolean;
+	editorReadOnly?: boolean;
 }
 
 export default SettingsPanel;
@@ -469,13 +468,11 @@ export function SettingsPanel({
 	videoDurationMs,
 	onAnnotationDurationChange,
 	onAnnotationFreezeChange,
-	onAnnotationHoldDurationChange,
 	selectedAudioAnnotationId,
 	audioAnnotationClips = [],
 	onAudioAnnotationVolumeChange,
 	onAudioAnnotationDurationChange,
 	onAudioAnnotationFreezeChange,
-	onAudioAnnotationHoldDurationChange,
 	onAudioAnnotationReplace,
 	onAudioAnnotationDelete,
 	selectedBlurId,
@@ -516,8 +513,14 @@ export function SettingsPanel({
 	onCursorThemeChange,
 	hasCursorData = false,
 	showCursorSettings = true,
+	editorReadOnly = false,
 }: SettingsPanelProps) {
 	const t = useScopedT("settings");
+	const previewReadOnlyBanner = editorReadOnly ? (
+		<div className="shrink-0 px-3 py-2 text-xs text-amber-200/90 bg-amber-500/10 border-b border-amber-500/20">
+			{t("annotation.previewModeReadOnly")}
+		</div>
+	) : null;
 	const [activePanelMode, setActivePanelMode] = useState<SettingsPanelMode>("background");
 	const sourceDimensions = formatSourceDimensions(videoElement, cropRegion);
 	// Resolved URLs are for DOM rendering only. We persist the canonical
@@ -816,7 +819,13 @@ export function SettingsPanel({
 	if (selectedAudioAnnotation && onAudioAnnotationVolumeChange && onAudioAnnotationDelete) {
 		return (
 			<div className="editor-inspector-shell flex min-w-0 flex-col h-full overflow-hidden">
-				<div className="min-h-0 flex-1 overflow-hidden">
+				{previewReadOnlyBanner}
+				<div
+					className={cn(
+						"min-h-0 flex-1 overflow-hidden",
+						editorReadOnly && "pointer-events-none opacity-60",
+					)}
+				>
 					<AudioAnnotationSettingsPanel
 						clip={selectedAudioAnnotation}
 						videoDurationMs={videoDurationMs}
@@ -832,12 +841,6 @@ export function SettingsPanel({
 						onFreezeDuringAnnotationChange={
 							onAudioAnnotationFreezeChange
 								? (enabled) => onAudioAnnotationFreezeChange(selectedAudioAnnotation.id, enabled)
-								: undefined
-						}
-						onHoldDurationChange={
-							onAudioAnnotationHoldDurationChange
-								? (holdDurationMs) =>
-										onAudioAnnotationHoldDurationChange(selectedAudioAnnotation.id, holdDurationMs)
 								: undefined
 						}
 						onReplaceAudio={
@@ -872,7 +875,13 @@ export function SettingsPanel({
 	) {
 		return (
 			<div className="editor-inspector-shell flex min-w-0 flex-col h-full overflow-hidden">
-				<div className="min-h-0 flex-1 overflow-hidden">
+				{previewReadOnlyBanner}
+				<div
+					className={cn(
+						"min-h-0 flex-1 overflow-hidden",
+						editorReadOnly && "pointer-events-none opacity-60",
+					)}
+				>
 					<AnnotationSettingsPanel
 						annotation={selectedAnnotation}
 						videoDurationMs={videoDurationMs}
@@ -887,12 +896,6 @@ export function SettingsPanel({
 						onFreezeDuringAnnotationChange={
 							onAnnotationFreezeChange
 								? (enabled) => onAnnotationFreezeChange(selectedAnnotation.id, enabled)
-								: undefined
-						}
-						onHoldDurationChange={
-							onAnnotationHoldDurationChange
-								? (holdDurationMs) =>
-										onAnnotationHoldDurationChange(selectedAnnotation.id, holdDurationMs)
 								: undefined
 						}
 						onFigureDataChange={
@@ -916,7 +919,13 @@ export function SettingsPanel({
 	if (BLUR_REGIONS_ENABLED && selectedBlur && onBlurDataChange && onBlurDelete) {
 		return (
 			<div className="editor-inspector-shell flex min-w-0 flex-col h-full overflow-hidden">
-				<div className="min-h-0 flex-1 overflow-hidden">
+				{previewReadOnlyBanner}
+				<div
+					className={cn(
+						"min-h-0 flex-1 overflow-hidden",
+						editorReadOnly && "pointer-events-none opacity-60",
+					)}
+				>
 					<BlurSettingsPanel
 						blurRegion={selectedBlur}
 						onBlurDataChange={(blurData) => onBlurDataChange(selectedBlur.id, blurData)}
@@ -933,7 +942,10 @@ export function SettingsPanel({
 
 	return (
 		<div className="editor-inspector-shell flex min-w-0 flex-col h-full overflow-hidden">
-			<div className="flex min-h-0 flex-1">
+			{previewReadOnlyBanner}
+			<div
+				className={cn("flex min-h-0 flex-1", editorReadOnly && "pointer-events-none opacity-60")}
+			>
 				<div className="settings-mode-rail flex w-11 shrink-0 flex-col items-center gap-1 border-r border-white/[0.07] bg-black/20 px-1 py-2.5">
 					{panelModes.map((mode) => {
 						const Icon = mode.icon;

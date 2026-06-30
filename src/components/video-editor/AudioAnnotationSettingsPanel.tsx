@@ -11,14 +11,12 @@ import {
 	isAcceptedAudioAnnotationFile,
 } from "@/lib/audioAnnotation";
 import { resolveImportedAudioReference } from "@/lib/audioAnnotationPersistence";
-import { getAudioClipHoldDurationMs } from "@/lib/holdRegions";
 import {
 	formatAnnotationClockMs,
 	MAX_POSITION_ANNOTATION_DURATION_MS,
 	MIN_POSITION_ANNOTATION_DURATION_MS,
 } from "./positionAnnotation";
 import type { AudioAnnotationClip } from "./types";
-import { MAX_HOLD_DURATION_MS, MIN_HOLD_DURATION_MS } from "./types";
 
 interface AudioAnnotationSettingsPanelProps {
 	clip: AudioAnnotationClip;
@@ -26,7 +24,6 @@ interface AudioAnnotationSettingsPanelProps {
 	onVolumeChange: (volume: number) => void;
 	onDurationChange?: (durationMs: number) => void;
 	onFreezeDuringAnnotationChange?: (enabled: boolean) => void;
-	onHoldDurationChange?: (holdDurationMs: number) => void;
 	onReplaceAudio?: (
 		audioUrl: string,
 		fileName: string,
@@ -42,7 +39,6 @@ export function AudioAnnotationSettingsPanel({
 	onVolumeChange,
 	onDurationChange,
 	onFreezeDuringAnnotationChange,
-	onHoldDurationChange,
 	onReplaceAudio,
 	onDelete,
 }: AudioAnnotationSettingsPanelProps) {
@@ -52,7 +48,6 @@ export function AudioAnnotationSettingsPanel({
 	const maxDurationMs = videoDurationMs
 		? Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, videoDurationMs - clip.anchorMs)
 		: MAX_POSITION_ANNOTATION_DURATION_MS;
-	const holdDurationMs = getAudioClipHoldDurationMs(clip);
 
 	const handleReplaceFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
 		const file = event.target.files?.[0];
@@ -134,26 +129,6 @@ export function AudioAnnotationSettingsPanel({
 							onCheckedChange={onFreezeDuringAnnotationChange}
 						/>
 					</div>
-					{clip.freezeDuringAnnotation && onHoldDurationChange && (
-						<div>
-							<div className="mb-2 flex items-center justify-between gap-3">
-								<div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-									{t("annotation.holdDuration")}
-								</div>
-								<div className="text-sm font-semibold tabular-nums text-[#a78bfa]">
-									{(holdDurationMs / 1000).toFixed(1)}s
-								</div>
-							</div>
-							<Slider
-								value={[holdDurationMs]}
-								min={Math.max(MIN_HOLD_DURATION_MS, clip.durationMs)}
-								max={MAX_HOLD_DURATION_MS}
-								step={100}
-								onValueChange={([value]) => onHoldDurationChange(value)}
-								className="py-1"
-							/>
-						</div>
-					)}
 				</div>
 			)}
 

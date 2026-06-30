@@ -261,6 +261,7 @@ export class VideoExporter {
 				webcamSizePreset: this.config.webcamSizePreset,
 				webcamPosition: this.config.webcamPosition,
 				annotationRegions: this.config.annotationRegions,
+				holdRegions: this.config.holdRegions,
 				speedRegions: this.config.speedRegions,
 				previewWidth: this.config.previewWidth,
 				previewHeight: this.config.previewHeight,
@@ -361,7 +362,14 @@ export class VideoExporter {
 
 				const timestamp = exportFrameIndex * frameDuration;
 				const sourceTimestampUs = sourceTimestampMs * 1000;
-				await renderer.renderFrame(videoFrame, sourceTimestampUs, webcamFrame);
+				const annotationOutputTimeMs =
+					holdRegions.length > 0 ? Math.round(timestamp / 1000) : undefined;
+				await renderer.renderFrame(
+					videoFrame,
+					sourceTimestampUs,
+					webcamFrame,
+					annotationOutputTimeMs,
+				);
 
 				const canvas = renderer.getCanvas();
 
