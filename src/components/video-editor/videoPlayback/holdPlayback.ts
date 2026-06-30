@@ -1,7 +1,8 @@
 import type { HoldRegion } from "@/components/video-editor/types";
 import {
-	computeHoldOutputSegments,
+	getHoldPlaybackOutputSpan,
 	getOutputDurationMs,
+	mergeHoldRegions,
 	outputToSourceMs,
 	sourceToOutputMs,
 } from "@/lib/timelineMapping";
@@ -63,20 +64,19 @@ export function resolveAnnotationAnimationTimeMs(
 		return outputMs;
 	}
 
-	const holdSegment = computeHoldOutputSegments(holdRegions).find(
-		(segment) => segment.sourceMs === annotationStartMs,
+	const holdAtStart = mergeHoldRegions(holdRegions).find(
+		(hold) => hold.sourceMs === annotationStartMs,
 	);
+	const holdOutputSpan = holdAtStart ? getHoldPlaybackOutputSpan(holdAtStart, holdRegions) : null;
 	const holdOutputStart =
-		holdSegment?.outputStart ?? sourceToOutputMs(annotationStartMs, holdRegions, sourceDurationMs);
+		holdOutputSpan?.start ?? sourceToOutputMs(annotationStartMs, holdRegions, sourceDurationMs);
+	const holdOutputEnd = holdOutputSpan?.end ?? holdOutputStart;
+
 	if (outputMs < holdOutputStart) {
 		return outputToSourceMs(outputMs, holdRegions, sourceDurationMs);
 	}
 
-	if (!holdSegment) {
-		return outputToSourceMs(outputMs, holdRegions, sourceDurationMs);
-	}
-
-	if (outputMs < holdSegment.outputEnd) {
+	if (holdOutputSpan && outputMs < holdOutputEnd) {
 		return annotationStartMs + (outputMs - holdOutputStart);
 	}
 

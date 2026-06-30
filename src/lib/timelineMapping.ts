@@ -79,10 +79,14 @@ export function computeHoldOutputSegments(holdRegions: HoldRegion[]): HoldOutput
 	return segments;
 }
 
-function getHoldInsertIncrementBefore(sourceMs: number, holdRegions: HoldRegion[]): number {
-	return computeHoldOutputSegments(holdRegions)
-		.filter((segment) => segment.sourceMs < sourceMs)
-		.reduce((sum, segment) => sum + segment.insertIncrementMs, 0);
+/** Sum of full hold durations for source anchors strictly before `sourceMs`. */
+export function cumulativeFullHoldDurationBefore(
+	sourceMs: number,
+	holdRegions: HoldRegion[],
+): number {
+	return mergeHoldRegions(holdRegions)
+		.filter((hold) => hold.sourceMs < sourceMs)
+		.reduce((sum, hold) => sum + hold.holdDurationMs, 0);
 }
 
 /** Per-hold output span used for preview freeze and freeze-track display (full holdDurationMs). */
@@ -118,7 +122,7 @@ export function getTotalHoldDurationMs(holdRegions: HoldRegion[]): number {
 }
 
 export function cumulativeHoldBefore(sourceMs: number, holdRegions: HoldRegion[]): number {
-	return getHoldInsertIncrementBefore(sourceMs, holdRegions);
+	return cumulativeFullHoldDurationBefore(sourceMs, holdRegions);
 }
 
 /** Map source timeline position to output (export/preview) timeline. */
@@ -127,7 +131,7 @@ export function sourceToOutputMs(
 	holdRegions: HoldRegion[],
 	_sourceDurationMs?: number,
 ): number {
-	return sourceMs + cumulativeHoldBefore(sourceMs, holdRegions);
+	return sourceMs + cumulativeFullHoldDurationBefore(sourceMs, holdRegions);
 }
 
 /** Map output timeline position back to source time. */
@@ -141,22 +145,25 @@ export function outputToSourceMs(
 		return activeHold.sourceMs;
 	}
 
-	const segments = computeHoldOutputSegments(holdRegions);
-	let accumulatedInsert = 0;
+	const merged = mergeHoldRegions(holdRegions);
+	let insertBefore = 0;
 
-	for (const segment of segments) {
-		if (outputMs >= segment.outputStart && outputMs < segment.outputEnd) {
-			return segment.sourceMs;
+	for (const hold of merged) {
+		const outputAtAnchor = hold.sourceMs + insertBefore;
+		const outputAtHoldEnd = outputAtAnchor + hold.holdDurationMs;
+
+		if (outputMs < outputAtAnchor) {
+			return outputMs - insertBefore;
 		}
 
-		if (outputMs < segment.outputStart) {
-			return outputMs - accumulatedInsert;
+		if (outputMs < outputAtHoldEnd) {
+			return hold.sourceMs;
 		}
 
-		accumulatedInsert += segment.insertIncrementMs;
+		insertBefore += hold.holdDurationMs;
 	}
 
-	return outputMs - accumulatedInsert;
+	return outputMs - insertBefore;
 }
 
 export function getOutputDurationMs(sourceDurationMs: number, holdRegions: HoldRegion[]): number {
@@ -188,10 +195,7 @@ export function getHoldInsertIncrementAtSourceMs(
 	sourceMs: number,
 	holdRegions: HoldRegion[],
 ): number {
-	return (
-		computeHoldOutputSegments(holdRegions).find((segment) => segment.sourceMs === sourceMs)
-			?.insertIncrementMs ?? 0
-	);
+	return getHoldDurationAtSourceMs(sourceMs, holdRegions);
 }
 
 export interface OutputSpan {
@@ -296,16 +300,17 @@ export interface HoldOutputSpan {
 	linkedAnnotationId?: string;
 }
 
-/** Per-hold insert spans on the output timeline (union drives total duration). */
+/** Per-hold insert spans on the output timeline (full anchor stacking; union for total duration). */
 export function getHoldOutputSpans(holdRegions: HoldRegion[]): HoldOutputSpan[] {
-	return computeHoldOutputSegments(holdRegions)
-		.filter((segment) => segment.insertIncrementMs > 0)
-		.map((segment) => ({
-			id: segment.id,
-			start: segment.outputStart,
-			end: segment.outputEnd,
-			linkedAnnotationId: segment.linkedAnnotationId,
-		}));
+	return mergeHoldRegions(holdRegions).map((hold) => {
+		const span = getHoldPlaybackOutputSpan(hold, holdRegions);
+		return {
+			id: hold.id,
+			start: span.start,
+			end: span.end,
+			linkedAnnotationId: hold.linkedAnnotationId,
+		};
+	});
 }
 
 /** Union-merge overlapping hold spans on the output timeline for total duration. */

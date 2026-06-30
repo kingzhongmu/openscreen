@@ -84,6 +84,16 @@ describe("assignExpandedLaneLayout", () => {
 		expect(lanes.get("a")).toBe(0);
 		expect(lanes.get("b")).toBe(1);
 	});
+
+	it("assigns one lane per item even when intervals do not overlap", () => {
+		const items = [
+			{ id: "early", startMs: 2000, endMs: 6100 },
+			{ id: "late", startMs: 9490, endMs: 12820 },
+		];
+		const lanes = assignExpandedLaneLayout(items);
+		expect(lanes.get("early")).toBe(0);
+		expect(lanes.get("late")).toBe(1);
+	});
 });
 
 describe("getPlayheadExpandCluster", () => {
@@ -103,6 +113,17 @@ describe("getPlayheadExpandCluster", () => {
 		];
 		const cluster = getPlayheadExpandCluster(items, 3000, "row-test");
 		expect(cluster?.memberIds.sort()).toEqual(["a", "b"]);
+	});
+
+	it("includes transitively overlapping items not directly under playhead", () => {
+		const items = [
+			{ id: "aaa", startMs: 7480, endMs: 10480 },
+			{ id: "two", startMs: 1300, endMs: 8150 },
+			{ id: "num", startMs: 2000, endMs: 6100 },
+			{ id: "bbb", startMs: 3040, endMs: 8150 },
+		];
+		const cluster = getPlayheadExpandCluster(items, 5000, "row-test");
+		expect(cluster?.memberIds.sort()).toEqual(["aaa", "bbb", "num", "two"]);
 	});
 });
 
@@ -139,6 +160,25 @@ describe("groupItemsByLaneRow", () => {
 		expect(groups.length).toBeGreaterThan(1);
 		expect(groups[0].items).toEqual([{ id: "c" }]);
 		expect(hasAnyOverlap([...spans.entries()].map(([id, s]) => ({ id, ...s })))).toBe(true);
+	});
+
+	it("uses unique rowIds for main row and expanded cluster lanes", () => {
+		const items = [{ id: "a" }, { id: "b" }];
+		const spans = new Map([
+			["a", { startMs: 0, endMs: 3000 }],
+			["b", { startMs: 1000, endMs: 4000 }],
+		]);
+		const cluster = getPlayheadExpandCluster(
+			[...spans.entries()].map(([id, span]) => ({ id, ...span })),
+			2000,
+			baseRowId,
+		);
+		const groups = groupItemsByLaneRow(items, baseRowId, spans, 2000, cluster!.id);
+		const rowIds = groups.map((group) => group.rowId);
+
+		expect(new Set(rowIds).size).toBe(rowIds.length);
+		expect(rowIds).toContain(baseRowId);
+		expect(rowIds).toContain(`${baseRowId}-lane-0`);
 	});
 
 	it("does not expand items away from playhead", () => {

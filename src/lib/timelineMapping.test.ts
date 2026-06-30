@@ -130,25 +130,27 @@ describe("timelineMapping", () => {
 		expect(getOutputDurationMs(10_000, duplicateAnchor)).toBe(13_600);
 	});
 
-	it("union-merges overlapping hold output spans on the freeze track", () => {
+	it("stacks full hold durations on output for nearby source anchors", () => {
 		const overlapping: HoldRegion[] = [
 			{ id: "hold-1", sourceMs: 500, holdDurationMs: 5000, linkedAnnotationId: "a1" },
 			{ id: "hold-2", sourceMs: 600, holdDurationMs: 3600, linkedAnnotationId: "a2" },
 		];
+		expect(getHoldOutputSpans(overlapping)).toEqual([
+			{ id: "hold-1", start: 500, end: 5500, linkedAnnotationId: "a1" },
+			{ id: "hold-2", start: 5600, end: 9200, linkedAnnotationId: "a2" },
+		]);
 		const merged = getMergedHoldOutputSpans(overlapping);
-		expect(merged).toHaveLength(1);
-		expect(merged[0]?.start).toBe(500);
-		expect(merged[0]?.end).toBe(7800);
-		expect(getMergedHoldOutputDurationMs(overlapping)).toBe(7300);
+		expect(merged).toHaveLength(2);
+		expect(getMergedHoldOutputDurationMs(overlapping)).toBe(8600);
 	});
 
-	it("union-merges partially overlapping holds without double-counting full durations", () => {
+	it("sums full hold insert time for staggered source anchors", () => {
 		const staggered: HoldRegion[] = [
 			{ id: "hold-1", sourceMs: 700, holdDurationMs: 3600, linkedAnnotationId: "a1" },
 			{ id: "hold-2", sourceMs: 800, holdDurationMs: 3600, linkedAnnotationId: "a2" },
 		];
-		expect(getMergedHoldOutputDurationMs(staggered)).toBe(3700);
-		expect(getOutputDurationMs(10_000, staggered)).toBe(13_700);
+		expect(getMergedHoldOutputDurationMs(staggered)).toBe(7200);
+		expect(getOutputDurationMs(10_000, staggered)).toBe(17_200);
 	});
 
 	it("maps consecutive holds with cumulative source-to-output offset", () => {
@@ -180,10 +182,10 @@ describe("timelineMapping", () => {
 			},
 		];
 		const audioStart = sourceToOutputMs(4050, holds);
-		expect(audioStart).toBe(11_257);
+		expect(audioStart).toBe(9167);
 		expect(getFreezeLinkedOutputSpan(4050, 4050 + 9447, 9447, holds)).toEqual({
-			start: 11_257,
-			end: 20_704,
+			start: 9167,
+			end: 18_614,
 		});
 
 		expect(isOutputTimeInHold(audioStart, holds)).toBe(true);
@@ -194,6 +196,29 @@ describe("timelineMapping", () => {
 		expect(findHoldPlaybackAtOutput(audioStart + 5000, holds)?.sourceMs).toBe(4050);
 		expect(outputToSourceMs(audioStart + 5000, holds)).toBe(4050);
 
-		expect(getOutputDurationMs(6900, holds)).toBeGreaterThanOrEqual(20_704);
+		expect(getOutputDurationMs(6900, holds)).toBeGreaterThanOrEqual(18_614);
+	});
+
+	it("stacks consecutive source-anchor holds (2s / 4s / 5s scenario)", () => {
+		const threeHolds: HoldRegion[] = [
+			{ id: "hold-2s", sourceMs: 2010, holdDurationMs: 4010, linkedAnnotationId: "a1" },
+			{ id: "hold-4s", sourceMs: 4020, holdDurationMs: 4000, linkedAnnotationId: "a2" },
+			{ id: "hold-5s", sourceMs: 5000, holdDurationMs: 7020, linkedAnnotationId: "a3" },
+		];
+		expect(getFreezeLinkedOutputSpan(2010, 2010 + 4010, 4010, threeHolds)).toEqual({
+			start: 2010,
+			end: 6020,
+		});
+		expect(getFreezeLinkedOutputSpan(4020, 4020 + 4000, 4000, threeHolds)).toEqual({
+			start: 8030,
+			end: 12_030,
+		});
+		expect(getFreezeLinkedOutputSpan(5000, 5000 + 7020, 7020, threeHolds)).toEqual({
+			start: 13_010,
+			end: 20_030,
+		});
+		expect(sourceToOutputMs(5000, threeHolds)).toBe(13_010);
+		expect(findHoldPlaybackAtOutput(13_010, threeHolds)?.id).toBe("hold-5s");
+		expect(outputToSourceMs(15_000, threeHolds)).toBe(5000);
 	});
 });

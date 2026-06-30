@@ -1,6 +1,6 @@
 # 视频指定点批注（Video Position Annotation）
 
-> 状态：图形/文字批注与音频解说 V1 已上线；**定帧批注（阶段 5–7）已实现**；**源视频/预览双模式（阶段 8）已实现**；**批注重叠展开多轨（阶段 9）已确认、待实现**；定帧内批注（阶段 10）已确认、待实现；编辑器内录音、TTS 待实现  
+> 状态：图形/文字批注与音频解说 V1 已上线；**定帧批注（阶段 5–7）已实现**；**源视频/预览双模式（阶段 8）已实现**；**批注重叠展开多轨（阶段 9）已实现**；定帧内批注（阶段 10）已确认、待实现；编辑器内录音、TTS 待实现  
 > 本文档取代原先以停帧（Hold）为核心的方案叙述，停帧相关内容见 [附录：可选定帧模式](#附录可选定帧模式freeze--hold)
 
 ## 背景与目标
@@ -123,7 +123,19 @@ interface AudioAnnotationClip {
 3. 默认 `durationMs = 3000`，侧栏可调
 4. 可选勾选「批注期间定帧画面」→ 条目进入**定帧轨**（阶段 7），不再在批注轨显示
 
-**批注轨**：仅叠加式批注；重叠时可 **展开为多子轨**（阶段 9）。**定帧轨**：定帧批注（可重叠，同样可展开）；同一锚点允许多条定帧批注并存。**定帧内批注轨**（阶段 10）：挂在某条定帧内部、按相对时间编排的 overlay / 旁白，见阶段 10。
+**批注轨**：仅叠加式批注；播放头处重叠时可 **展开为多子轨**（阶段 9，已实现）。**定帧轨**：定帧批注（可重叠，同样可展开）；同一锚点允许多条定帧批注并存。**定帧内批注轨**（阶段 10）：挂在某条定帧内部、按相对时间编排的 overlay / 旁白，见阶段 10。
+
+### 时间轴滚轮（阶段 9 同期）
+
+时间轴区域滚轮行为（工具栏右侧有快捷键提示）：
+
+| 操作 | 行为 |
+| --- | --- |
+| **滚轮** | 上下滚动时间轴面板（垂直 scroll） |
+| **Alt + 滚轮** | 水平平移可见时间范围 |
+| **Ctrl + 滚轮**（Mac：`⌘ + 滚轮`） | 以指针位置为中心缩放 |
+
+实现：`TimelineEditor` 在滚动容器上使用原生 `wheel` 监听（`passive: false`）；Windows 下额外追踪 Alt 键状态，避免 `altKey` 在滚轮事件中不可靠。
 
 ## 时间轴与播放
 
@@ -199,7 +211,7 @@ interface AudioAnnotationClip {
 |------|------|
 | `A` | 在播放头处快速添加**文字**批注（3 秒） |
 | `B` | 添加模糊批注（仅 `BLUR_REGIONS_ENABLED`） |
-| `Tab` / `Shift+Tab` | 在同一时刻重叠的批注间切换选中 |
+| `Tab` / `Shift+Tab` | 折叠时在播放头处重叠条目间切换；展开时在整簇成员间循环（阶段 9） |
 
 ### 实现要点
 
@@ -276,17 +288,23 @@ interface AudioAnnotationClip {
 
 ### 重叠与总时长
 
+定帧映射分两层语义：
+
+| 用途 | 规则 |
+| --- | --- |
+| **单条定帧在成片上的位置**（预览 / seek / 定帧轨显示） | 源锚点 `sourceMs` 之前，所有定帧的 `holdDurationMs` **全长累加**（同锚点先 `mergeHoldRegions` 取最长） |
+| **成片总插入时长**（导出 MP4 总长） | 各 hold 的成片 insert span 做**并集**；成片上不重叠的段长度相加，重叠段只计一次 |
+
 - 多条定帧批注**允许在定帧轨上重叠**（同锚点或多锚点均可）
-- 每条映射到成片时间轴上的一段插入区间
-- **总定帧插入时长** = 所有区间的**并集（Union）**长度，**非**各条时长简单相加
-- **成片总长** = 源时长 + 并集长度
-- 同一起点多条定帧：并集等价于取最长条（重叠部分只计一次）
+- **成片总长** = `max(源时长 + 并集插入时长, 最晚 hold 成片 end)`（见 `getOutputDurationMs`）
+- 同一起点多条定帧：`mergeHoldRegions` 取最长条，并集等价于一条
 
 ```text
-例 — 重叠
-  定帧 A: 5.0s 起，长 3s
-  定帧 B: 5.5s 起，长 3s
-  → 定帧轨上两条可重叠；成片插入 = 并集（约 3.5s），不是 6s
+例 — 源锚点顺序累加（预览定位）
+  定帧-2s: 源 2.01 起，长 4.01s
+  定帧-4s: 源 4.02 起，长 4.00s
+  定帧-5s: 源 5.00 起，长 7.02s
+  → 定帧-2s 成片 2.01–6.02；定帧-4s 成片 8.03–12.03；定帧-5s 成片 13.01–20.03
 
 例 — 源时间首尾相接
   定帧 A: 2.0s 起，长 4s（源锚点 2s）
@@ -296,16 +314,16 @@ interface AudioAnnotationClip {
 例 — 源时间有间隔
   定帧 A: 5.0s 起，长 3s
   定帧 B: 8.0s 起，长 2s
-  → 并集 = 3s + 2s = 5s；A 与 B 之间正常播放源视频
+  → 成片 insert 并集 = 3s + 2s = 5s；A 与 B 之间正常播放源视频
 ```
 
 ### 实现要点
 
 1. 时间轴：定帧批注仅 `HOLD_ROW`；批注轨过滤 `freezeDuringAnnotation`
 2. 侧栏：移除定帧时长滑块；拖定帧轨条 = 改批注时长
-3. 映射：`computeHoldOutputSegments` + 并集总时长（`timelineMapping.ts`）
+3. 映射：`sourceToOutputMs` / `outputToSourceMs` 用全长累加；`getHoldOutputSpans` + `unionMergeHoldOutputSpans` 算导出并集（`timelineMapping.ts`）；`computeHoldOutputSegments` 保留作边际插入参考
 4. 数据：`HoldRegion.holdDurationMs` 由 span 派生；加载时 legacy `holdDurationMs` 合并进 span
-5. 测试：`timelineMapping.test.ts` 覆盖同锚点、重叠、部分重叠
+5. 测试：`timelineMapping.test.ts` 覆盖同锚点、顺序累加（2s/4s/5s）、部分重叠
 
 ## 阶段 8：源视频 / 预览双模式（已实现）
 
@@ -322,6 +340,7 @@ interface AudioAnnotationClip {
 
 - **源视频模式**：标尺、条位置、播放头均使用源视频毫秒（可编辑）
 - **预览模式**：标尺、条位置、播放头映射为**成片时间**（定帧段在轴上展开）；只读，不可拖
+- **滚轮**：垂直滚动面板；**Alt + 滚轮** 平移；**Ctrl + 滚轮** 缩放（见上文「时间轴滚轮」）
 - 预览模式工具栏显示源时间副标签（如 `源 0:05.0 / 0:30.0`），便于对照锚点
 - 点击/拖拽预览时间轴 seek 时，内部转换为源时间驱动视频
 
@@ -343,82 +362,92 @@ interface AudioAnnotationClip {
 - `VideoPlayback`：可见性 / 音频 / overlay 交互按模式分支
 - `SettingsPanel`：预览模式只读
 
-## 阶段 9：批注重叠展开多轨（已确认，待实现）
+## 阶段 9：批注重叠展开多轨（已实现）
 
 ### 动机与问题
 
-定帧轨与批注轨均 **允许重叠**（同锚点或多条时间交叉）。当前所有条目画在 **同一物理行** 上，导致：
+定帧轨与批注轨均 **允许重叠**（同锚点或多条时间交叉）。折叠时所有条目画在 **同一物理行** 上，导致：
 
 - 重叠条难以选中、拖拽改区间易误触相邻条；
 - `Tab` 切换同锚点批注效率低，视觉密度高；
 - 同锚点多条定帧（文本 + 音频等）编辑体验差。
 
-阶段 9 不改变批注/定帧的 **时间语义**（仍为源 `startMs` / `anchorMs` 与 `freezeDuringAnnotation`），只改善 **时间轴编辑布局**：将重叠簇 **展开** 为多条子轨，子轨内不重叠。
+阶段 9 不改变批注/定帧的 **时间语义**（仍为源 `startMs` / `anchorMs` 与 `freezeDuringAnnotation`），只改善 **时间轴编辑布局**：将 **播放头处** 的重叠簇 **展开** 为多条子轨，子轨内不重叠。
 
 ### 与定帧内批注（阶段 10）的分工
 
 | 维度 | 阶段 9 展开多轨 | 阶段 10 定帧内批注 |
 | --- | --- | --- |
 | 解决问题 | 同一时段多条批注/定帧 **不好选、不好拖** | 长定帧 **内部** 第 N 秒再出现内容 |
-| 影响范围 | 时间轴 UI + 可选 `laneIndex` | 新时间坐标 + 预览/导出/映射 |
+| 影响范围 | 时间轴 UI + 展开状态（localStorage） | 新时间坐标 + 预览/导出/映射 |
 | 成片时钟 | 不变 | 不变（不额外延长） |
-
-**先做阶段 9**：风险低、直接缓解当前重叠编辑痛点；阶段 10 实现时可复用 `AnnotationGroup` / 子轨 UI，避免两套布局。
 
 ### 核心交互
 
 ```text
-折叠（默认）          展开
-批注轨 ──[A][B]──     批注轨 lane 0 ──[A]──
-      重叠              批注轨 lane 1 ──[B]──
+折叠（默认）                    展开（仅播放头处簇）
+批注轨 ──[A][B]──（重叠）        批注轨 ──[C]──（非簇成员留主轨）
+                                 批注轨 lane 1 ──[A]──
+                                 批注轨 lane 2 ──[B]──
 
-定帧轨 ──[F1][F2]──   定帧轨 lane 0 ──[F1]──
-      同锚点             定帧轨 lane 1 ──[F2]──
+定帧轨 ──[F1][F2]──（同锚点）    定帧轨 lane 0 ──[F1]──
+                                 定帧轨 lane 1 ──[F2]──
 ```
 
-- **重叠检测**：同一轨道内，时间区间 `[start, end)` 有交集的条目归为 **一簇（cluster）**。
-- **展开 / 收起**：簇级 toggle；展开后每条占一 **子 lane**，簇内按稳定规则排序（如 `startMs` → `id`）。
-- **可逆**：收起后恢复单轨叠层显示；数据不丢。
-- **源视频模式** 与 **预览模式** 均可展开（只读预览模式仍可展开查看，不可拖条）。
+- **展开条件**：播放头下存在 **≥2 条** 可展开成员时显示 ▶/▼（成员来自下方簇定义）。
+- **簇范围**：批注轨 = 播放头下任意条目所属的 **时间重叠连通分量**（区间有交集即连通，`aaa` 与 `bbb` 相交且 `bbb` 在播放头下 ⇒ `aaa` 一并展开）；定帧轨 = 上述分量 **并上** 同源锚点 sibling（150ms 吸附阈值，预览轴 span 可不相交）。
+- **展开粒度**：每次只展开 **当前播放头簇**；簇外条目仍留在主轨，**非**整轨展开。
+- **展开 / 收起**：簇级 toggle；展开后 **每条成员独占一子 lane**（按 `startMs` → `id` 排序），便于选中与水平拖动不换轨。
+- **可逆**：收起后恢复单轨叠层显示；批注/定帧数据不变。
+- **源视频模式** 与 **预览模式** 均可展开；预览模式只读时仍可展开查看，不可拖条。
+- **Tab**：折叠时在播放头处重叠条目间切换；展开时在 **整簇成员** 间按 lane 顺序循环（定帧轨含定帧批注与定帧音频批注）。
 
-### 数据模型（拟）
+### 数据与持久化
 
-不改变现有 `startMs` / `endMs` / `anchorMs` 语义。可选持久化字段：
+**不在** `AnnotationRegion` / 项目 JSON 上新增 `laneIndex` / `laneGroupId`（MVP 未 bump `PROJECT_VERSION`）。
+
+展开状态为 **编辑器 UI 状态**，按轨道记录当前展开的簇 id：
 
 ```typescript
-/** 重叠簇标识；同簇条目展开时共享 laneGroupId */
-laneGroupId?: string;
-
-/** 展开视图下的子轨序号，0 = 簇内第一条 lane；未展开时可省略 */
-laneIndex?: number;
+expandedClustersByTrack: Record<trackId, clusterId>
+// localStorage key: openscreen-timeline-expanded-clusters
 ```
 
-抽象 **AnnotationGroup**（实现层，可不单独持久化）：
+重开项目后批注/定帧条目不变；展开布局按 localStorage 恢复（同浏览器会话偏好）。
 
-- 重叠簇、将来的定帧组、父/子批注关系统一为 group；
-- 阶段 9 MVP 仅用于 **重叠簇 ↔ 子 lane** 映射。
+簇检测与 lane 布局见 `src/lib/overlapClusters.ts`（`detectOverlapClusters`、`getPlayheadExpandCluster`、`groupItemsByLaneRow`、`assignExpandedLaneLayout`）。
 
-默认行为：无 `laneIndex` 时与现版完全一致（单轨叠层）。
+### MVP 范围（已实现 vs 未做）
 
-### MVP 范围
+| 项 | 状态 |
+| --- | --- |
+| 批注轨：播放头簇展开/收起 + 子 lane | ✅ |
+| 定帧轨：同锚点 / 重叠展开 | ✅ |
+| 展开按钮不触发 seek（`data-timeline-control`） | ✅ |
+| 展开态 Tab 限定 lane 内循环 | ✅ |
+| localStorage 持久化展开簇 id | ✅ |
+| 时间轴滚轮：垂直 / Alt 平移 / Ctrl 缩放 | ✅ |
+| 条目级 `laneIndex` / 项目内持久化布局 | ❌ 未做 |
+| 音频批注轨独立展开 | ❌ 未做（定帧音频随定帧轨 Tab 循环） |
+| 父/子批注、`holdOffsetMs` | ❌ 阶段 10 |
 
-1. **批注轨**：重叠簇检测 → 展开/收起 → 子 lane 渲染与选中
-2. **定帧轨**：同锚点或多条重叠时同样可展开
-3. **持久化** `laneIndex` / `laneGroupId`（可选，重开项目保持展开布局）
-4. **不做**：父/子批注、`holdOffsetMs`、预览模式条拖拽编辑、音频批注轨独立展开（可第二期）
+### 实现要点
 
-### 实现要点（规划，尚未编码）
+1. **簇检测**：`overlapClusters.ts` — `detectOverlapClusters` + `getPlayheadExpandCluster`（播放头所在重叠连通分量 + 定帧轨同源锚点扩展）
+2. **布局**：`TimelineEditor` — `LanedTrackRows` + `groupItemsByLaneRow(..., playheadMs, expandedClusterId)`
+3. **交互**：`Row.tsx` — chevron、`stopPropagation`；`toggleClusterExpand(trackId, clusterId)`
+4. **测试**：`overlapClusters.test.ts`（簇检测、lane 分配、播放头簇、持久化 helper）
 
-1. **簇检测**：`detectOverlapClusters(items: { id, startMs, endMs }[])`（批注轨 / 定帧轨各算）
-2. **布局**：`TimelineEditor` 按 `expandedGroupIds` 动态增加子 row 高度
-3. **交互**：簇头 chevron、展开态 `Tab` 仅在当前 lane 内切换
-4. **持久化**：`PROJECT_VERSION` bump；缺失字段视为折叠单轨
+### 验证
 
-### 验证（阶段 9 完成后）
+```bash
+npx vitest run src/lib/overlapClusters.test.ts
+```
 
-- 同锚点 3 条定帧 → 展开后 3 条子轨，各自可选中拖拽，预览/导出与折叠前一致
-- 收起 → 恢复叠层；保存重开 → 展开状态与 lane 分配保持（若启用持久化）
-- 无重叠时 UI 与现版相同，无额外空 lane
+- 播放头处同锚点 3 条定帧 → 展开后 3 条子轨，各自可选中拖拽，预览/导出与折叠前一致
+- 收起 → 恢复叠层；刷新页面 → 展开簇 id 从 localStorage 恢复
+- 无重叠或播放头不在簇内 → UI 与折叠态相同，无 ▶/▼
+- 点击 ▶/▼ 时播放头不跳动
 
 ### 非目标（阶段 9）
 
@@ -610,7 +639,7 @@ linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
 
 - **阶段 7** 定帧轨：定义「停多久」；阶段 10 **不替代**定帧轨，只在已有 insert 段内编排内容。
 - **阶段 8** 预览模式：定帧内批注的 **创建与精调** 以预览模式为主；源模式可查看、不宜按源时间拖条。
-- **阶段 9** 展开多轨：定帧轨重叠编辑体验；定帧内批注条目可画在定帧组展开后的子 lane 上。
+- **阶段 9** 展开多轨（已实现）：定帧轨/批注轨播放头簇子 lane；定帧内批注条目可复用同一子轨 UI
 - 定帧 **起点** 的定帧批注（`holdOffset = 0`）与 **定帧内** 批注（`holdOffset > 0`）可并存；前者走现有 `freezeDuringAnnotation`，后者走 `hold-inner`（或统一模型后 `holdOffsetMs` 可选字段，实现时再定）。
 
 ### 实现要点（规划，尚未编码）
@@ -649,12 +678,12 @@ linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
 | **6** | 定帧模式下标注/字幕/Whisper 时间重映射 + 成片标尺 | ✅ 已上线 |
 | **7** | 定帧轨产品定义：仅定帧轨显示、条长=定帧时长、并集映射总时长 | ✅ 已实现 |
 | **8** | 源视频/预览双模式 + 时间轴源时间编辑 | ✅ 已实现 |
-| **9** | 批注重叠展开多轨：重叠簇展开/收起、子 lane、`laneIndex` | 已确认，待实现 |
+| **9** | 批注重叠展开多轨：播放头簇展开/收起、子 lane、滚轮快捷键 | ✅ 已实现 |
 | **10** | 定帧内批注：`linkedHoldId` + `holdOffsetMs` + 预览/导出显隐 | 已确认，待实现 |
 | **11** | 体验：批注模板、批量编辑、复制到其他锚点                          | 待做    |
 
 
-优先级建议：叠加式 **1 → 2** 优先；定帧 **5 → 7 → 8** 已落地；**9 → 10** 先做重叠展开多轨（编辑体验），再做定帧内批注（新时间坐标）；教程式长定帧分步场景依赖阶段 10。
+优先级建议：叠加式 **1 → 2** 优先；定帧 **5 → 7 → 8 → 9** 已落地；下一步 **10** 定帧内批注（新时间坐标）；教程式长定帧分步场景依赖阶段 10。
 
 ## 风险与兼容
 
@@ -662,7 +691,7 @@ linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
 2. **自动字幕**：叠加模式下时间戳无需改动；定帧模式需重映射或重新生成
 3. **变速 + 批注**：锚点按源时间；变速区内的批注随源时间缩放（与 zoom/trim 一致）
 4. **GIF 导出**：音频批注 GIF 无声；定帧需同帧重复
-5. **多条重叠批注**：叠加轨 zIndex 排序已有；定帧轨允许重叠，成片时长取并集；阶段 9 展开多轨改善编辑，不改变播放语义
+5. **多条重叠批注**：叠加轨 zIndex 排序已有；定帧轨允许重叠，成片时长取并集；阶段 9 播放头簇展开多轨改善编辑，不改变播放语义
 6. **阶段 7 迁移**：旧项目独立 `holdDurationMs` 需与 span 对齐或忽略
 7. **阶段 10**：定帧内批注与源时间批注、定帧起点批注三套坐标并存；文档与 UI 必须明确「定帧 +Xs」与「源 Xs」
 8. **重叠定帧**：定帧内批注必须绑定 `linkedHoldId`，不能仅靠成片时间反推
@@ -678,7 +707,10 @@ linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
 | `src/components/video-editor/VideoEditor.tsx`             | 添删改批注、导出传参                          |
 | `src/components/video-editor/VideoPlayback.tsx`           | 预览 overlay 显隐                       |
 | `src/components/video-editor/AnnotationOverlay.tsx`       | 文字/箭头/模糊渲染与拖拽                       |
-| `src/components/video-editor/timeline/TimelineEditor.tsx` | 标注轨 UI                              |
+| `src/components/video-editor/timeline/TimelineEditor.tsx` | 标注轨 / 定帧轨 UI、展开多轨、滚轮平移/缩放 |
+| `src/components/video-editor/timeline/Row.tsx` | 轨道行、展开 chevron、`data-timeline-control` |
+| `src/lib/overlapClusters.ts` | 重叠簇检测、播放头簇、子 lane 布局、展开状态 localStorage |
+| `src/lib/overlapClusters.test.ts` | 阶段 9 单元测试 |
 | `src/lib/exporter/annotationRenderer.ts`                  | 导出合成                                |
 | `src/lib/exporter/frameRenderer.ts`                       | 帧管线调用标注                             |
 | `src/components/video-editor/AddPositionAnnotationMenu.tsx` | 添加批注下拉入口 |
@@ -712,13 +744,14 @@ linkedHoldId   = 播放头所在的那条定帧（HoldRegion）
 | `src/components/video-editor/VideoPlayback.tsx` | 定帧内 overlay 显隐与动画时钟 |
 | `src/lib/exporter/annotationRenderer.ts` | 导出按 hold-offset 合成 |
 
-重叠展开多轨（阶段 9，规划）：
+重叠展开多轨（阶段 9）：
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/components/video-editor/timeline/TimelineEditor.tsx` | 重叠簇检测、展开/收起、子 lane 布局 |
-| `src/components/video-editor/types.ts` | 可选 `laneIndex` / `laneGroupId` |
-| `src/components/video-editor/projectPersistence.ts` | 展开布局持久化（可选） |
+| `src/lib/overlapClusters.ts` | 簇检测、`getPlayheadExpandCluster`、`groupItemsByLaneRow`、展开状态读写 |
+| `src/components/video-editor/timeline/TimelineEditor.tsx` | `LanedTrackRows`、Tab 循环、滚轮（垂直/Alt 平移/Ctrl 缩放） |
+| `src/components/video-editor/timeline/Row.tsx` | 子 lane 样式、展开/收起按钮 |
+| `src/lib/shortcuts.ts` | 固定快捷键说明（Scroll / Alt+Scroll / Ctrl+Scroll） |
 
 ## 验证
 
@@ -744,10 +777,15 @@ npx vitest run src/lib/timelineMapping.test.ts
 - 定帧批注只在定帧轨显示与编辑 → 预览 / 导出一致
 - 重叠定帧条 → 成片总长 = 并集，非简单相加
 
-重叠展开多轨（阶段 9 后）：
+重叠展开多轨（阶段 9）：
 
-- 同锚点多条定帧 → 展开为子 lane，各自选中拖拽，预览/导出与折叠前一致
-- 无重叠项目行为与现版相同
+```bash
+npx vitest run src/lib/overlapClusters.test.ts
+```
+
+- 播放头处同锚点多条定帧 → 展开为子 lane，各自选中拖拽，预览/导出与折叠前一致
+- 无重叠或播放头不在簇内 → 与折叠态相同
+- Alt+滚轮平移、滚轮垂直滚动、Ctrl+滚轮缩放
 
 定帧内批注（阶段 10 后）：
 
@@ -773,16 +811,15 @@ interface HoldRegion {
 
 批注侧：`freezeDuringAnnotation: true`；**不再**提供独立 `holdDurationMs` 滑块（阶段 7）。
 
-### 时间映射（阶段 7 目标）
+### 时间映射
 
-1. 每条定帧批注 → 成片插入区间 `[outputStart, outputEnd)`（由源锚点 + 条长映射）
-2. 合并所有区间为**并集**，得到有效定帧段集合
-3. **成片总长** = 源时长 + 并集各段长度之和
-4. **源 ↔ 成片** seek / 预览 / 导出均基于并集后的插入布局
+1. 每条定帧批注 → 成片 insert 区间 `[outputStart, outputStart + holdDurationMs)`，其中  
+   `outputStart = sourceMs + cumulativeFullHoldDurationBefore(sourceMs)`（同锚点先合并取最长）
+2. **导出总插入时长** = 上述各区间在成片轴上的**并集**长度（`getMergedHoldOutputDurationMs`）
+3. **成片总长** = `getOutputDurationMs(sourceDuration, holdRegions)`
+4. **源 ↔ 成片** seek / 预览 / 定帧轨显示均基于全长累加映射；定帧段内 `video.currentTime` 固定于 `sourceMs`
 
-> 当前实现（阶段 5–6）仍部分使用逐条累加与双轨显示；阶段 7 对齐本附录。
-
-实现：`src/lib/timelineMapping.ts`
+实现：`src/lib/timelineMapping.ts`（`sourceToOutputMs`、`cumulativeFullHoldDurationBefore`、`getHoldOutputSpans`、`unionMergeHoldOutputSpans`）
 
 ### 预览
 

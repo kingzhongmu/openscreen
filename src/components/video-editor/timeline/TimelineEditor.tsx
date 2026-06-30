@@ -34,7 +34,6 @@ import { useShortcuts } from "@/contexts/ShortcutsContext";
 import { useAudioPeaks } from "@/hooks/useAudioPeaks";
 import { FREEZE_ANCHOR_SNAP_THRESHOLD_MS } from "@/lib/holdRegions";
 import {
-	assignOverlapLanes,
 	getPlayheadExpandCluster,
 	groupItemsByLaneRow,
 	type LaneRowLayoutOptions,
@@ -247,11 +246,11 @@ function LanedTrackRows({
 				<Row
 					key={group.rowId}
 					id={group.rowId}
-					isEmpty={Boolean(isEmpty && group.laneIndex === 0 && group.items.length === 0)}
-					hint={group.laneIndex === 0 ? hint : undefined}
-					isSubLane={group.laneIndex > 0}
+					isEmpty={Boolean(isEmpty && group.rowId === baseRowId && group.items.length === 0)}
+					hint={group.rowId === baseRowId ? hint : undefined}
+					isSubLane={group.rowId !== baseRowId}
 					laneExpand={
-						group.laneIndex === 0 && hasPlayheadOverlap && playheadCluster
+						group.rowId === baseRowId && hasPlayheadOverlap && playheadCluster
 							? {
 									expanded: isClusterExpanded,
 									onToggle: () => onToggleClusterExpand(playheadCluster.id),
@@ -272,6 +271,7 @@ function cycleOverlappingSelection(
 	selectedId: string | null | undefined,
 	shiftKey: boolean,
 	expanded: boolean,
+	clusterMemberIds: string[] | undefined,
 	onSelect: (id: string) => void,
 ): boolean {
 	if (candidates.length === 0) {
@@ -279,15 +279,11 @@ function cycleOverlappingSelection(
 	}
 
 	let pool = candidates;
-	if (expanded && selectedId && candidates.length > 1) {
-		const lanes = assignOverlapLanes(candidates);
-		const selectedLane = lanes.get(selectedId);
-		if (selectedLane !== undefined) {
-			const laneFiltered = candidates.filter((item) => lanes.get(item.id) === selectedLane);
-			if (laneFiltered.length > 0) {
-				pool = laneFiltered;
-			}
-		}
+	if (expanded && clusterMemberIds && clusterMemberIds.length > 1) {
+		const memberOrder = new Map(clusterMemberIds.map((id, index) => [id, index]));
+		pool = [...candidates].sort(
+			(a, b) => (memberOrder.get(a.id) ?? 0) - (memberOrder.get(b.id) ?? 0),
+		);
 	}
 
 	if (!selectedId || !pool.some((item) => item.id === selectedId)) {
@@ -1903,12 +1899,22 @@ export default function TimelineEditor({
 				annotationCluster && expandedClustersByTrack[ANNOTATION_ROW_ID] === annotationCluster.id,
 			);
 
+			const holdCandidates =
+				holdExpanded && holdCluster
+					? holdTabSpanItems.filter((item) => holdCluster.memberIds.includes(item.id))
+					: holdAtPlayhead;
+			const annotationCandidates =
+				annotationExpanded && annotationCluster
+					? annotationTabSpanItems.filter((item) => annotationCluster.memberIds.includes(item.id))
+					: annotationAtPlayhead;
+
 			const cycleHold = () =>
 				cycleOverlappingSelection(
-					holdAtPlayhead,
+					holdCandidates,
 					selectedFreezeAudio ? selectedAudioAnnotationId : selectedAnnotationId,
 					e.shiftKey,
 					holdExpanded,
+					holdCluster?.memberIds,
 					(id) => {
 						if (audioAnnotationClips.some((clip) => clip.id === id)) {
 							onSelectAudioAnnotation?.(id);
@@ -1922,26 +1928,27 @@ export default function TimelineEditor({
 
 			const cycleAnnotation = () =>
 				cycleOverlappingSelection(
-					annotationAtPlayhead,
+					annotationCandidates,
 					selectedAnnotationId,
 					e.shiftKey,
 					annotationExpanded,
+					annotationCluster?.memberIds,
 					(id) => onSelectAnnotation?.(id),
 				);
 
-			if (onHoldTrack && holdAtPlayhead.length > 0) {
+			if (onHoldTrack && holdCandidates.length > 0) {
 				e.preventDefault();
 				cycleHold();
 				return;
 			}
 
-			if (annotationAtPlayhead.length > 0) {
+			if (annotationCandidates.length > 0) {
 				e.preventDefault();
 				cycleAnnotation();
 				return;
 			}
 
-			if (holdAtPlayhead.length > 0) {
+			if (holdCandidates.length > 0) {
 				e.preventDefault();
 				cycleHold();
 			}

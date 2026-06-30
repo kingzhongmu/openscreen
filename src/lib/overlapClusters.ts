@@ -141,8 +141,10 @@ function extendMemberIdsWithSameSourceAnchors(
 }
 
 /**
- * Overlap cluster at the playhead: items whose span contains playheadMs (plus
- * same source-anchor siblings on the hold track). Returns null when fewer than 2.
+ * Overlap cluster at the playhead: the full time-overlap connected component
+ * that contains any item under playheadMs (not only items whose span contains
+ * the playhead). Same source-anchor siblings on the hold track are added after.
+ * Returns null when fewer than 2 members.
  */
 export function getPlayheadExpandCluster(
 	spanItems: TimelineSpanItem[],
@@ -150,10 +152,20 @@ export function getPlayheadExpandCluster(
 	trackKey: string,
 	layoutOptions?: LaneRowLayoutOptions,
 ): { id: string; memberIds: string[] } | null {
-	let memberIds = getItemsAtPlayhead(spanItems, playheadMs).map((item) => item.id);
-	if (memberIds.length === 0) {
+	const atPlayhead = getItemsAtPlayhead(spanItems, playheadMs);
+	if (atPlayhead.length === 0) {
 		return null;
 	}
+
+	const playheadIds = new Set(atPlayhead.map((item) => item.id));
+	const overlapCluster = detectOverlapClusters(spanItems).find(
+		(cluster) =>
+			cluster.memberIds.length >= 2 && cluster.memberIds.some((id) => playheadIds.has(id)),
+	);
+
+	let memberIds = overlapCluster
+		? [...overlapCluster.memberIds]
+		: atPlayhead.map((item) => item.id);
 
 	if (layoutOptions?.sourceAnchorById) {
 		memberIds = extendMemberIdsWithSameSourceAnchors(
@@ -198,56 +210,28 @@ export function assignOverlapLanes(items: TimelineSpanItem[]): Map<string, numbe
 }
 
 /**
- * Lane layout when expanded: interval-greedy lanes, or one lane per item when
- * items share a source anchor but preview-axis spans do not overlap.
+ * Lane layout when expanded: one physical row per cluster member (sorted by start → id).
+ * Avoids sharing a sub-lane between non-overlapping items so drag stays on one row.
  */
 export function assignExpandedLaneLayout(
 	items: TimelineSpanItem[],
-	options?: LaneRowLayoutOptions,
+	_options?: LaneRowLayoutOptions,
 ): Map<string, number> {
-	if (hasAnyOverlap(items)) {
-		return assignOverlapLanes(items);
-	}
-
-	const sourceAnchorById = options?.sourceAnchorById;
-	if (!sourceAnchorById) {
-		return new Map(items.map((item) => [item.id, 0]));
-	}
-
-	const thresholdMs = options.anchorSnapThresholdMs ?? 150;
+	const sorted = sortSpanItems(items);
 	const lanes = new Map<string, number>();
-	const anchorBuckets: Array<{ anchorMs: number; items: TimelineSpanItem[] }> = [];
-
-	for (const item of sortSpanItems(items)) {
-		const anchorMs = sourceAnchorById.get(item.id) ?? item.startMs;
-		const bucket = anchorBuckets.find(
-			(entry) => Math.abs(entry.anchorMs - anchorMs) <= thresholdMs,
-		);
-		if (bucket) {
-			bucket.items.push(item);
-		} else {
-			anchorBuckets.push({ anchorMs, items: [item] });
-		}
-	}
-
-	for (const bucket of anchorBuckets) {
-		if (bucket.items.length < 2) {
-			for (const item of bucket.items) {
-				lanes.set(item.id, 0);
-			}
-			continue;
-		}
-		const sorted = sortSpanItems(bucket.items);
-		sorted.forEach((item, laneIndex) => {
-			lanes.set(item.id, laneIndex);
-		});
-	}
-
+	sorted.forEach((item, laneIndex) => {
+		lanes.set(item.id, laneIndex);
+	});
 	return lanes;
 }
 
 export function buildLaneRowId(baseRowId: string, laneIndex: number): string {
 	return laneIndex === 0 ? baseRowId : `${baseRowId}-lane-${laneIndex}`;
+}
+
+/** Sub-lane row id when a cluster is expanded; never aliases `baseRowId`. */
+export function buildExpandedClusterLaneRowId(baseRowId: string, laneIndex: number): string {
+	return `${baseRowId}-lane-${laneIndex}`;
 }
 
 export function parseLaneIndexFromRowId(baseRowId: string, rowId: string): number {
@@ -320,7 +304,7 @@ export function groupItemsByLaneRow<T extends { id: string }>(
 	const groups: LaneRowGroup<T>[] = [{ rowId: baseRowId, laneIndex: 0, items: mainItems }];
 
 	for (let lane = 0; lane <= maxLane; lane++) {
-		const rowId = buildLaneRowId(baseRowId, lane);
+		const rowId = buildExpandedClusterLaneRowId(baseRowId, lane);
 		const laneItems = clusterItems.filter((item) => (laneById.get(item.id) ?? 0) === lane);
 		if (laneItems.length > 0) {
 			groups.push({ rowId, laneIndex: lane, items: laneItems });
