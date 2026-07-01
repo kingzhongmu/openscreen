@@ -1303,6 +1303,7 @@ function Timeline({
 									onSegmentDurationChange={onHoldSegmentDurationChange}
 									onSegmentPairDurationChange={onHoldSegmentPairDurationChange}
 									readOnly={false}
+									moveDisabled={timelineReadOnly}
 								/>
 							);
 						}

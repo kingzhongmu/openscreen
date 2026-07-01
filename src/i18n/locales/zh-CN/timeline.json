@@ -44,7 +44,10 @@
 		"emptyText": "空文本",
 		"blurItem": "模糊 {{index}}",
 		"holdSegment": "定帧",
-		"holdCollectionStep": "步骤 {{index}}"
+		"holdCollectionStep": "步骤 {{index}}",
+		"holdCollectionDragHandle": "拖动以移动定帧块",
+		"holdCollectionDragHandlePreview": "预览模式下不可移动定帧位置",
+		"holdCollectionResizeShell": "调整集合总时长"
 	},
 	"emptyState": {
 		"noVideo": "未加载视频",

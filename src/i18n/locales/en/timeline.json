@@ -48,7 +48,10 @@
 		"imageItem": "Image",
 		"emptyText": "Empty text",
 		"holdSegment": "Freeze",
-		"holdCollectionStep": "Step {{index}}"
+		"holdCollectionStep": "Step {{index}}",
+		"holdCollectionDragHandle": "Drag to move freeze block",
+		"holdCollectionDragHandlePreview": "Freeze position is fixed in preview",
+		"holdCollectionResizeShell": "Resize total duration"
 	},
 	"emptyState": {
 		"noVideo": "No Video Loaded",
