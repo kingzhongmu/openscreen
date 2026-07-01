@@ -208,6 +208,15 @@
 		"invalidFileType": "Invalid file type",
 		"failedToLoad": "Failed to load audio file"
 	},
+	"bgm": {
+		"title": "Background Music",
+		"active": "Active",
+		"fileName": "File",
+		"untitled": "Untitled music",
+		"replaceFile": "Replace Music",
+		"volume": "Volume",
+		"delete": "Delete Background Music"
+	},
 	"fontStyles": {
 		"classic": "Classic",
 		"editor": "Editor",

@@ -37,10 +37,13 @@ import {
 	deriveInspectorTabKind,
 } from "@/lib/annotationTabKind";
 import {
-	buildAudioAnnotationClip,
+	buildBgmAudioClip,
 	buildLinkedAnnotationAudioClip,
+	clampBgmClipDurationMs,
 	getAudioFileDurationMs,
+	getMaxBgmClipDurationMs,
 	isAcceptedAudioAnnotationFile,
+	isBgmAudioClip,
 	linkedAnnotationAudioClipId,
 	syncLinkedAnnotationAudioClipSpan,
 } from "@/lib/audioAnnotation";
@@ -170,7 +173,6 @@ import {
 } from "./types";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import VideoPlayback, { VideoPlaybackRef } from "./VideoPlayback";
-import { holdPlaybackLog } from "./videoPlayback/holdPlaybackDebug";
 
 /** Single Sonner slot so auto-caption phases update in place instead of stacking. */
 const AUTO_CAPTION_PROGRESS_TOAST_ID = "auto-caption-progress";
@@ -438,7 +440,10 @@ export default function VideoEditor() {
 
 	const nextAnnotationIdRef = useRef(1);
 	const nextAudioAnnotationIdRef = useRef(1);
-	const audioImportInputRef = useRef<HTMLInputElement | null>(null);
+	const nextBgmIdRef = useRef(1);
+	const linkedAudioImportInputRef = useRef<HTMLInputElement | null>(null);
+	const bgmImportInputRef = useRef<HTMLInputElement | null>(null);
+	const pendingLinkedAudioAnnotationIdRef = useRef<string | null>(null);
 	const nextAnnotationZIndexRef = useRef(1);
 	const isAutoCaptioningRef = useRef(false);
 	const [isAutoCaptioning, setIsAutoCaptioning] = useState(false);
@@ -583,6 +588,10 @@ export default function VideoEditor() {
 			);
 			nextAudioAnnotationIdRef.current = deriveNextId(
 				"audio-annotation",
+				normalizedEditor.audioAnnotationClips.map((clip) => clip.id),
+			);
+			nextBgmIdRef.current = deriveNextId(
+				"bgm",
 				normalizedEditor.audioAnnotationClips.map((clip) => clip.id),
 			);
 			nextAnnotationZIndexRef.current =
@@ -1040,6 +1049,7 @@ export default function VideoEditor() {
 		nextAnnotationIdRef.current = 1;
 		nextAnnotationZIndexRef.current = 1;
 		nextAudioAnnotationIdRef.current = 1;
+		nextBgmIdRef.current = 1;
 	}, [resetState]);
 
 	const handleNewProject = useCallback(async () => {
@@ -1137,17 +1147,13 @@ export default function VideoEditor() {
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [isFullscreen]);
 
-	function handleSeek(time: number) {
-		const video = videoPlaybackRef.current?.video;
-		if (!video) return;
-		holdPlaybackLog("ui-seek", {
-			targetSec: time,
-			targetMs: Math.round(time * 1000),
-			videoBeforeMs: Math.round(video.currentTime * 1000),
-			reactCurrentTimeMs: Math.round(currentTime * 1000),
-			holdRegions,
-		});
-		video.currentTime = time;
+	function handleSeek(time: number, outputMs?: number) {
+		videoPlaybackRef.current?.seekTo(time, outputMs);
+		const sourceMs = Math.round(time * 1000);
+		setCurrentTime(time);
+		if (holdRegions.length > 0) {
+			setOutputPlaybackTimeMs(outputMs ?? sourceToOutputMs(sourceMs, holdRegions));
+		}
 	}
 
 	const handleTimeUpdate = useCallback(
@@ -1163,13 +1169,12 @@ export default function VideoEditor() {
 	);
 
 	const handleTimelineSeek = useCallback(
-		(timeSec: number) => {
-			const video = videoPlaybackRef.current?.video;
-			if (!video) return;
-
-			video.currentTime = timeSec;
+		(timeSec: number, outputMs?: number) => {
+			videoPlaybackRef.current?.seekTo(timeSec, outputMs);
+			const sourceMs = Math.round(timeSec * 1000);
+			setCurrentTime(timeSec);
 			if (holdRegions.length > 0) {
-				setOutputPlaybackTimeMs(sourceToOutputMs(Math.round(timeSec * 1000), holdRegions));
+				setOutputPlaybackTimeMs(outputMs ?? sourceToOutputMs(sourceMs, holdRegions));
 			}
 		},
 		[holdRegions],
@@ -1839,11 +1844,42 @@ export default function VideoEditor() {
 		[pushState],
 	);
 
-	const handleAudioImportRequest = useCallback(() => {
-		audioImportInputRef.current?.click();
+	const handlePositionAnnotationAudioNarration = useCallback(() => {
+		const totalMs = Math.round(durationRef.current * 1000);
+		if (totalMs <= 0) {
+			return;
+		}
+
+		const anchorMs = Math.round(currentTime * 1000);
+		const span = computePositionAnnotationSpan(
+			anchorMs,
+			DEFAULT_POSITION_ANNOTATION_DURATION_MS,
+			totalMs,
+		);
+		if (span.end <= span.start) {
+			return;
+		}
+
+		const id = `annotation-${nextAnnotationIdRef.current++}`;
+		const zIndex = nextAnnotationZIndexRef.current++;
+		const newRegion = buildPositionAnnotationRegion("text", span, id, zIndex);
+
+		pushState((prev) =>
+			withSyncedHoldRegions(prev, {
+				annotationRegions: [...prev.annotationRegions, newRegion],
+			}),
+		);
+		selectTimelineItem({ kind: "annotation", id });
+		pendingLinkedAudioAnnotationIdRef.current = id;
+		setIsPlaying(false);
+		linkedAudioImportInputRef.current?.click();
+	}, [currentTime, pushState, selectTimelineItem]);
+
+	const handleBgmImportRequest = useCallback(() => {
+		bgmImportInputRef.current?.click();
 	}, []);
 
-	const handleAudioFileSelected = useCallback(
+	const handleBgmFileSelected = useCallback(
 		async (event: React.ChangeEvent<HTMLInputElement>) => {
 			const file = event.target.files?.[0];
 			event.target.value = "";
@@ -1864,10 +1900,9 @@ export default function VideoEditor() {
 			try {
 				const { audioUrl, sourceFilePath } = resolveImportedAudioReference(file);
 				const sourceDurationMs = await getAudioFileDurationMs(audioUrl);
-				const id = `audio-annotation-${nextAudioAnnotationIdRef.current++}`;
-				const clip = buildAudioAnnotationClip(
+				const id = `bgm-${nextBgmIdRef.current++}`;
+				const clip = buildBgmAudioClip(
 					id,
-					Math.round(currentTime * 1000),
 					audioUrl,
 					sourceDurationMs,
 					file.name,
@@ -1890,23 +1925,35 @@ export default function VideoEditor() {
 				toast.error(t("audioAnnotation.failedToLoad"));
 			}
 		},
-		[currentTime, pushState, selectTimelineItem, t],
+		[pushState, selectTimelineItem, t],
 	);
 
 	const handleAudioAnnotationSpanChange = useCallback(
 		(id: string, span: Span) => {
-			const durationMs = Math.max(1, Math.round(span.end - span.start));
+			const totalMs = Math.round(durationRef.current * 1000);
 			pushState((prev) =>
 				withSyncedHoldRegions(prev, {
-					audioAnnotationClips: prev.audioAnnotationClips.map((clip) =>
-						clip.id === id
-							? {
-									...clip,
-									anchorMs: Math.round(span.start),
+					audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
+						if (clip.id !== id) {
+							return clip;
+						}
+						const anchorMs = Math.round(span.start);
+						const durationMs = Math.max(1, Math.round(span.end - span.start));
+						if (isBgmAudioClip(clip)) {
+							return {
+								...clip,
+								anchorMs,
+								durationMs: clampBgmClipDurationMs(
+									anchorMs,
 									durationMs,
-								}
-							: clip,
-					),
+									totalMs,
+									prev.holdRegions,
+									clip.sourceDurationMs,
+								),
+							};
+						}
+						return { ...clip, anchorMs, durationMs };
+					}),
 				}),
 			);
 		},
@@ -1921,6 +1968,18 @@ export default function VideoEditor() {
 					audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
 						if (clip.id !== id) {
 							return clip;
+						}
+						if (isBgmAudioClip(clip)) {
+							return {
+								...clip,
+								durationMs: clampBgmClipDurationMs(
+									clip.anchorMs,
+									durationMs,
+									totalMs,
+									prev.holdRegions,
+									clip.sourceDurationMs,
+								),
+							};
 						}
 						const maxDuration = Math.max(500, totalMs - clip.anchorMs);
 						return {
@@ -2013,6 +2072,22 @@ export default function VideoEditor() {
 				audioAnnotationClips: prev.audioAnnotationClips.map((clip) => {
 					if (clip.id !== id) {
 						return clip;
+					}
+					if (isBgmAudioClip(clip)) {
+						return {
+							...clip,
+							audioUrl,
+							fileName,
+							sourceDurationMs,
+							sourceFilePath,
+							durationMs: clampBgmClipDurationMs(
+								clip.anchorMs,
+								Math.max(clip.durationMs, sourceDurationMs),
+								totalMs,
+								prev.holdRegions,
+								sourceDurationMs,
+							),
+						};
 					}
 					const maxDuration = Math.max(500, totalMs - clip.anchorMs);
 					return {
@@ -2341,6 +2416,38 @@ export default function VideoEditor() {
 			});
 		},
 		[pushState],
+	);
+
+	const handleLinkedAudioFileSelected = useCallback(
+		async (event: React.ChangeEvent<HTMLInputElement>) => {
+			const file = event.target.files?.[0];
+			event.target.value = "";
+			const annotationId = pendingLinkedAudioAnnotationIdRef.current;
+			pendingLinkedAudioAnnotationIdRef.current = null;
+			if (!file || !annotationId) {
+				return;
+			}
+
+			if (!isAcceptedAudioAnnotationFile(file)) {
+				toast.error(t("audioAnnotation.invalidFileType"));
+				return;
+			}
+
+			try {
+				const { audioUrl, sourceFilePath } = resolveImportedAudioReference(file);
+				const sourceDurationMs = await getAudioFileDurationMs(audioUrl);
+				handleLinkedAnnotationAudioReplace(
+					annotationId,
+					audioUrl,
+					file.name,
+					sourceDurationMs,
+					sourceFilePath,
+				);
+			} catch {
+				toast.error(t("audioAnnotation.failedToLoad"));
+			}
+		},
+		[handleLinkedAnnotationAudioReplace, t],
 	);
 
 	const handleLinkedAnnotationAudioVolumeChange = useCallback(
@@ -3845,14 +3952,14 @@ export default function VideoEditor() {
 												onAdd={({ type, freeze }) =>
 													handlePositionAnnotationAdded(type, { freeze })
 												}
-												onImportAudio={handleAudioImportRequest}
+												onAddAudioNarration={handlePositionAnnotationAudioNarration}
 											/>
 											<input
-												ref={audioImportInputRef}
+												ref={linkedAudioImportInputRef}
 												type="file"
 												accept=".mp3,.wav,audio/mpeg,audio/wav"
 												className="hidden"
-												onChange={handleAudioFileSelected}
+												onChange={handleLinkedAudioFileSelected}
 											/>
 										</div>
 									</div>
@@ -4124,7 +4231,8 @@ export default function VideoEditor() {
 									onAudioAnnotationDelete={handleAudioAnnotationDelete}
 									selectedAudioAnnotationId={selectedAudioAnnotationId}
 									onSelectAudioAnnotation={handleSelectAudioAnnotation}
-									onImportAudio={handleAudioImportRequest}
+									onImportBgm={handleBgmImportRequest}
+									onAddAudioNarration={handlePositionAnnotationAudioNarration}
 									blurRegions={blurRegions}
 									onBlurSpanChange={handleAnnotationSpanChange}
 									onBlurDelete={handleAnnotationDelete}
@@ -4156,6 +4264,13 @@ export default function VideoEditor() {
 										}
 										setShowAutoCaptionsDialog(true);
 									}}
+								/>
+								<input
+									ref={bgmImportInputRef}
+									type="file"
+									accept=".mp3,.wav,audio/mpeg,audio/wav"
+									className="hidden"
+									onChange={handleBgmFileSelected}
 								/>
 							</div>
 						</Panel>

@@ -8,6 +8,7 @@ import { useScopedT } from "@/contexts/I18nContext";
 import {
 	ACCEPTED_AUDIO_ANNOTATION_EXTENSIONS,
 	getAudioFileDurationMs,
+	getMaxBgmClipDurationMs,
 	isAcceptedAudioAnnotationFile,
 } from "@/lib/audioAnnotation";
 import { resolveImportedAudioReference } from "@/lib/audioAnnotationPersistence";
@@ -20,7 +21,9 @@ import type { AudioAnnotationClip } from "./types";
 
 interface AudioAnnotationSettingsPanelProps {
 	clip: AudioAnnotationClip;
+	variant?: "narration" | "bgm";
 	videoDurationMs?: number;
+	holdRegions?: import("./types").HoldRegion[];
 	onVolumeChange: (volume: number) => void;
 	onDurationChange?: (durationMs: number) => void;
 	onFreezeDuringAnnotationChange?: (enabled: boolean) => void;
@@ -35,7 +38,9 @@ interface AudioAnnotationSettingsPanelProps {
 
 export function AudioAnnotationSettingsPanel({
 	clip,
+	variant = "narration",
 	videoDurationMs,
+	holdRegions = [],
 	onVolumeChange,
 	onDurationChange,
 	onFreezeDuringAnnotationChange,
@@ -43,11 +48,19 @@ export function AudioAnnotationSettingsPanel({
 	onDelete,
 }: AudioAnnotationSettingsPanelProps) {
 	const t = useScopedT("settings");
+	const copyKey = variant === "bgm" ? "bgm" : "audioAnnotation";
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
-	const maxDurationMs = videoDurationMs
-		? Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, videoDurationMs - clip.anchorMs)
-		: MAX_POSITION_ANNOTATION_DURATION_MS;
+	const maxDurationMs =
+		variant === "bgm" && videoDurationMs
+			? getMaxBgmClipDurationMs(clip.anchorMs, videoDurationMs, holdRegions, clip.sourceDurationMs)
+			: videoDurationMs
+				? Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, videoDurationMs - clip.anchorMs)
+				: MAX_POSITION_ANNOTATION_DURATION_MS;
+	const sliderMaxMs =
+		variant === "bgm"
+			? maxDurationMs
+			: Math.min(maxDurationMs, MAX_POSITION_ANNOTATION_DURATION_MS);
 
 	const handleReplaceFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
 		const file = event.target.files?.[0];
@@ -73,11 +86,9 @@ export function AudioAnnotationSettingsPanel({
 		<div className="min-w-0 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar">
 			<div className="mb-4">
 				<span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-					{t("audioAnnotation.active")}
+					{t(`${copyKey}.active`)}
 				</span>
-				<div className="mt-1 text-xl font-semibold text-slate-100">
-					{t("audioAnnotation.title")}
-				</div>
+				<div className="mt-1 text-xl font-semibold text-slate-100">{t(`${copyKey}.title`)}</div>
 			</div>
 
 			<div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 space-y-3">
@@ -102,9 +113,9 @@ export function AudioAnnotationSettingsPanel({
 				{onDurationChange && (
 					<div>
 						<Slider
-							value={[Math.min(clip.durationMs, maxDurationMs)]}
+							value={[Math.min(clip.durationMs, sliderMaxMs)]}
 							min={MIN_POSITION_ANNOTATION_DURATION_MS}
-							max={Math.min(maxDurationMs, MAX_POSITION_ANNOTATION_DURATION_MS)}
+							max={sliderMaxMs}
 							step={100}
 							onValueChange={([value]) => onDurationChange(value)}
 							className="py-1"
@@ -133,9 +144,9 @@ export function AudioAnnotationSettingsPanel({
 			)}
 
 			<div className="mb-4 space-y-2">
-				<div className="text-xs font-medium text-slate-200">{t("audioAnnotation.fileName")}</div>
+				<div className="text-xs font-medium text-slate-200">{t(`${copyKey}.fileName`)}</div>
 				<div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300 truncate">
-					{clip.fileName || t("audioAnnotation.untitled")}
+					{clip.fileName || t(`${copyKey}.untitled`)}
 				</div>
 				{onReplaceAudio && (
 					<>
@@ -154,7 +165,7 @@ export function AudioAnnotationSettingsPanel({
 							onClick={() => fileInputRef.current?.click()}
 						>
 							<Upload className="w-4 h-4 mr-2" />
-							{t("audioAnnotation.replaceFile")}
+							{t(`${copyKey}.replaceFile`)}
 						</Button>
 					</>
 				)}
@@ -164,7 +175,7 @@ export function AudioAnnotationSettingsPanel({
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-2 text-xs font-medium text-slate-200">
 						<Volume2 className="w-4 h-4" />
-						{t("audioAnnotation.volume")}
+						{t(`${copyKey}.volume`)}
 					</div>
 					<span className="text-xs tabular-nums text-slate-400">
 						{Math.round((clip.volume ?? 1) * 100)}%
@@ -181,7 +192,7 @@ export function AudioAnnotationSettingsPanel({
 
 			<Button type="button" variant="destructive" size="sm" className="mt-auto" onClick={onDelete}>
 				<Trash2 className="w-4 h-4 mr-2" />
-				{t("audioAnnotation.delete")}
+				{t(`${copyKey}.delete`)}
 			</Button>
 		</div>
 	);

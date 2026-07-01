@@ -5,8 +5,15 @@ import {
 import type {
 	AudioAnnotationClip,
 	HoldCollectionSegmentAudio,
+	HoldRegion,
 } from "@/components/video-editor/types";
 import { DEFAULT_AUDIO_ANNOTATION_VOLUME } from "@/components/video-editor/types";
+import {
+	getOutputDurationMs,
+	outputToSourceMs,
+	resolveContinuousSourceTimelineMs,
+	sourceToOutputMs,
+} from "@/lib/timelineMapping";
 
 export const LINKED_ANNOTATION_AUDIO_PREFIX = "linked-audio:";
 
@@ -16,6 +23,20 @@ export function linkedAnnotationAudioClipId(annotationId: string): string {
 
 export function isLinkedAnnotationAudioClipId(clipId: string): boolean {
 	return clipId.startsWith(LINKED_ANNOTATION_AUDIO_PREFIX);
+}
+
+export function isBgmAudioClip(clip: AudioAnnotationClip): boolean {
+	if (isLinkedAnnotationAudioClipId(clip.id)) {
+		return false;
+	}
+	if (clip.freezeDuringAnnotation) {
+		return false;
+	}
+	return clip.role === "bgm" || clip.role === undefined;
+}
+
+export function usesSourceTimelineAudioPlayback(clip: AudioAnnotationClip): boolean {
+	return isBgmAudioClip(clip);
 }
 
 export function linkedAnnotationAudioFromClip(
@@ -154,6 +175,29 @@ export function buildAudioAnnotationClip(
 	};
 }
 
+export function buildBgmAudioClip(
+	id: string,
+	audioUrl: string,
+	sourceDurationMs: number,
+	fileName: string,
+	totalMs: number,
+	sourceFilePath?: string,
+): AudioAnnotationClip | null {
+	const clip = buildAudioAnnotationClip(
+		id,
+		0,
+		audioUrl,
+		sourceDurationMs,
+		fileName,
+		totalMs,
+		sourceFilePath,
+	);
+	if (!clip) {
+		return null;
+	}
+	return { ...clip, role: "bgm" };
+}
+
 export function audioAnnotationClipSpan(clip: AudioAnnotationClip): {
 	startMs: number;
 	endMs: number;
@@ -162,4 +206,93 @@ export function audioAnnotationClipSpan(clip: AudioAnnotationClip): {
 		startMs: clip.anchorMs,
 		endMs: clip.anchorMs + clip.durationMs,
 	};
+}
+
+/** Max BGM duration on the continuous source clock (covers full preview when holds extend output). */
+export function getMaxBgmClipDurationMs(
+	anchorMs: number,
+	sourceDurationMs: number,
+	holdRegions: HoldRegion[],
+	sourceFileDurationMs?: number,
+): number {
+	if (sourceDurationMs <= 0) {
+		return MIN_POSITION_ANNOTATION_DURATION_MS;
+	}
+
+	const outputDurationMs = getOutputDurationMs(sourceDurationMs, holdRegions);
+	const continuousAtPreviewEnd = resolveContinuousSourceTimelineMs(
+		outputDurationMs,
+		sourceDurationMs,
+		holdRegions,
+	);
+	const timelineMax = Math.max(
+		MIN_POSITION_ANNOTATION_DURATION_MS,
+		continuousAtPreviewEnd - Math.max(0, Math.round(anchorMs)),
+	);
+	const fileMax =
+		sourceFileDurationMs && sourceFileDurationMs > 0 ? sourceFileDurationMs : timelineMax;
+	return Math.min(timelineMax, fileMax);
+}
+
+export function bgmClipToOutputSpan(
+	anchorMs: number,
+	durationMs: number,
+	holdRegions: HoldRegion[],
+	sourceDurationMs: number,
+): { start: number; end: number } {
+	if (holdRegions.length === 0) {
+		const start = Math.max(0, Math.round(anchorMs));
+		return { start, end: start + Math.max(1, Math.round(durationMs)) };
+	}
+
+	const outputStart = sourceToOutputMs(Math.max(0, Math.round(anchorMs)), holdRegions);
+	const outputEnd = Math.min(
+		getOutputDurationMs(sourceDurationMs, holdRegions),
+		outputStart + Math.max(1, Math.round(durationMs)),
+	);
+	return { start: outputStart, end: Math.max(outputStart + 1, outputEnd) };
+}
+
+export function outputSpanToBgmClipSpan(
+	outputStart: number,
+	outputEnd: number,
+	holdRegions: HoldRegion[],
+	minDurationMs = MIN_POSITION_ANNOTATION_DURATION_MS,
+): { anchorMs: number; durationMs: number } {
+	const roundedStart = Math.max(0, Math.round(outputStart));
+	const roundedEnd = Math.max(roundedStart + 1, Math.round(outputEnd));
+
+	if (holdRegions.length === 0) {
+		return {
+			anchorMs: roundedStart,
+			durationMs: Math.max(minDurationMs, roundedEnd - roundedStart),
+		};
+	}
+
+	const anchorMs = outputToSourceMs(roundedStart, holdRegions);
+	const sourceAtEnd = outputToSourceMs(roundedEnd, holdRegions);
+	const continuousEnd = resolveContinuousSourceTimelineMs(roundedEnd, sourceAtEnd, holdRegions);
+	return {
+		anchorMs,
+		durationMs: Math.max(minDurationMs, continuousEnd - anchorMs),
+	};
+}
+
+export function clampBgmClipDurationMs(
+	anchorMs: number,
+	durationMs: number,
+	sourceDurationMs: number,
+	holdRegions: HoldRegion[],
+	sourceFileDurationMs?: number,
+): number {
+	const maxDurationMs = getMaxBgmClipDurationMs(
+		anchorMs,
+		sourceDurationMs,
+		holdRegions,
+		sourceFileDurationMs,
+	);
+	return Math.max(
+		MIN_POSITION_ANNOTATION_DURATION_MS,
+		Math.min(Math.round(durationMs), maxDurationMs),
+	);
 }

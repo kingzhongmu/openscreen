@@ -18,6 +18,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { usesSourceTimelineAudioPlayback } from "@/lib/audioAnnotation";
 import {
 	getWebcamLayoutCssBoxShadow,
 	reactiveWebcamScale,
@@ -52,6 +53,9 @@ import {
 	isFreezeLinkedRegionVisibleAtOutputTime,
 	isOutputTimeInHold,
 	isRegionVisibleAtOutputTime,
+	outputToSourceMs,
+	resolveContinuousSourceTimelineMs,
+	sourceToOutputMs,
 } from "@/lib/timelineMapping";
 import { classifyWallpaper, DEFAULT_WALLPAPER, resolveImageWallpaperUrl } from "@/lib/wallpaper";
 import { getCssClipPath } from "@/lib/webcamMaskShapes";
@@ -185,6 +189,8 @@ export interface VideoPlaybackRef {
 	containerRef: React.RefObject<HTMLDivElement>;
 	play: () => Promise<void>;
 	pause: () => void;
+	/** Seek source time; pass outputMs when preview hold clock must jump on the output axis. */
+	seekTo: (sourceSec: number, outputMs?: number) => void;
 }
 
 function getResolvedVideoDuration(video: HTMLVideoElement): number | null {
@@ -396,6 +402,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const sourceDurationMsRef = useRef(0);
 		const outputTimeRef = useRef(0);
 		const holdSeekInProgressRef = useRef(false);
+		const holdClockControlsRef = useRef<{
+			resetFromSource: (sourceMs: number) => void;
+			resetFromOutput: (outputMs: number) => void;
+			getOutputTimeMs: () => number;
+		} | null>(null);
 		const syncPreviewAudioRef = useRef<() => void>(() => {
 			/* populated in useEffect */
 		});
@@ -706,6 +717,43 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				video.pause();
 				supplementalAudioRef.current?.pause();
 			},
+			seekTo: (sourceSec: number, outputMs?: number) => {
+				const video = videoRef.current;
+				if (!video) {
+					return;
+				}
+
+				const holds = holdRegionsRef.current;
+				const useHoldPreview = holds.length > 0 && playbackModeRef.current === "preview";
+				let resolvedOutputMs =
+					outputMs ??
+					sourceToOutputMs(Math.round(sourceSec * 1000), holds, sourceDurationMsRef.current);
+
+				if (useHoldPreview) {
+					if (outputMs !== undefined) {
+						holdClockControlsRef.current?.resetFromOutput(outputMs);
+					} else {
+						holdClockControlsRef.current?.resetFromSource(Math.round(sourceSec * 1000));
+						resolvedOutputMs = holdClockControlsRef.current?.getOutputTimeMs() ?? resolvedOutputMs;
+					}
+					const sourceMs = outputToSourceMs(resolvedOutputMs, holds, sourceDurationMsRef.current);
+					outputTimeRef.current = resolvedOutputMs;
+					currentTimeRef.current = sourceMs;
+					const resolvedSourceSec = sourceMs / 1000;
+					holdSeekInProgressRef.current = true;
+					if (Math.abs(video.currentTime - resolvedSourceSec) > 0.001) {
+						video.currentTime = resolvedSourceSec;
+					} else {
+						holdSeekInProgressRef.current = false;
+					}
+					onTimeUpdateRef.current(resolvedSourceSec, resolvedOutputMs);
+					syncPreviewAudioRef.current();
+					return;
+				}
+
+				holdSeekInProgressRef.current = true;
+				video.currentTime = sourceSec;
+			},
 		}));
 
 		const updateFocusFromClientPoint = (clientX: number, clientY: number) => {
@@ -911,7 +959,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				}
 
 				const isHoldSegmentClip = parseHoldSegmentIdFromAudioClipId(clip.id) !== null;
-				const useClipOutputClock = holds.length > 0 && playbackModeRef.current === "preview";
+				const useSourceTimeline = usesSourceTimelineAudioPlayback(clip);
+				const useClipOutputClock =
+					holds.length > 0 &&
+					playbackModeRef.current === "preview" &&
+					!useSourceTimeline &&
+					!isHoldSegmentClip;
 				const playbackAxis = useClipOutputClock ? "preview" : "source";
 				const { anchorMs, durationMs } = resolveHoldSegmentAudioClipPlayback(
 					clip,
@@ -923,7 +976,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 					useClipOutputClock && !isHoldSegmentClip
 						? resolveAudioAnnotationOutputAnchorMs(clip.anchorMs, holds)
 						: anchorMs;
-				const timeMs = useClipOutputClock ? outputMs : sourceTimeMs;
+				const timeMs =
+					useSourceTimeline && useOutputClock
+						? resolveContinuousSourceTimelineMs(outputMs, sourceTimeMs, holds)
+						: useClipOutputClock
+							? outputMs
+							: sourceTimeMs;
 				const inRange = timeMs >= resolvedAnchorMs && timeMs < resolvedAnchorMs + durationMs;
 				const offsetSec = Math.max(0, (timeMs - resolvedAnchorMs) / 1000);
 				const clipDurationSec = durationMs / 1000;
@@ -1386,7 +1444,15 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			layoutVideoContentRef.current?.();
 			video.pause();
 
-			const { handlePlay, handlePause, handleSeeked, handleSeeking } = createVideoEventHandlers({
+			const {
+				handlePlay,
+				handlePause,
+				handleSeeked,
+				handleSeeking,
+				resetHoldClockFromSource,
+				resetHoldClockFromOutput,
+				getHoldClockOutputTimeMs,
+			} = createVideoEventHandlers({
 				video,
 				isSeekingRef,
 				isPlayingRef,
@@ -1410,6 +1476,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				onScrubChange: (scrubbing) => setIsScrubbing(scrubbing),
 				onAfterTimeUpdate: () => syncPreviewAudioRef.current(),
 			});
+			holdClockControlsRef.current = {
+				resetFromSource: resetHoldClockFromSource,
+				resetFromOutput: resetHoldClockFromOutput,
+				getOutputTimeMs: getHoldClockOutputTimeMs,
+			};
 
 			video.addEventListener("play", handlePlay);
 			video.addEventListener("pause", handlePause);

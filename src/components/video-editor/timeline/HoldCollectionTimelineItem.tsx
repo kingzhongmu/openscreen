@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { formatAnnotationClockMs } from "../positionAnnotation";
 import type { HoldCollection } from "../types";
 import glassStyles from "./ItemGlass.module.css";
+import { TIMELINE_ITEM_HEIGHT } from "./timelineLayout";
 
 interface HoldCollectionTimelineItemProps {
 	id: string;
@@ -109,10 +110,10 @@ export default function HoldCollectionTimelineItem({
 				<div
 					className={cn(
 						glassStyles.glassHold,
-						"relative flex h-[30px] w-full overflow-visible",
+						"relative flex w-full overflow-visible",
 						isHighlighted && glassStyles.selected,
 					)}
-					style={{ minWidth: 48 }}
+					style={{ height: TIMELINE_ITEM_HEIGHT, minWidth: 48 }}
 					onClick={(event) => {
 						event.stopPropagation();
 						onSelectCollection?.();

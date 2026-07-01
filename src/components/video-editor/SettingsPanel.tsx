@@ -43,7 +43,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useScopedT } from "@/contexts/I18nContext";
 import { getAssetPath } from "@/lib/assetPath";
-import { linkedAnnotationAudioClipId, linkedAnnotationAudioFromClip } from "@/lib/audioAnnotation";
+import {
+	isBgmAudioClip,
+	linkedAnnotationAudioClipId,
+	linkedAnnotationAudioFromClip,
+} from "@/lib/audioAnnotation";
 import { WEBCAM_LAYOUT_PRESETS } from "@/lib/compositeLayout";
 import { CURSOR_THEMES, DEFAULT_CURSOR_THEME_ID } from "@/lib/cursor/cursorThemes";
 import type { ExportFormat, ExportQuality, GifFrameRate, GifSizePreset } from "@/lib/exporter";
@@ -941,7 +945,9 @@ export function SettingsPanel({
 				>
 					<AudioAnnotationSettingsPanel
 						clip={selectedAudioAnnotation}
+						variant={isBgmAudioClip(selectedAudioAnnotation) ? "bgm" : "narration"}
 						videoDurationMs={videoDurationMs}
+						holdRegions={holdRegions}
 						onVolumeChange={(volume) =>
 							onAudioAnnotationVolumeChange(selectedAudioAnnotation.id, volume)
 						}
@@ -952,7 +958,7 @@ export function SettingsPanel({
 								: undefined
 						}
 						onFreezeDuringAnnotationChange={
-							onAudioAnnotationFreezeChange
+							onAudioAnnotationFreezeChange && !isBgmAudioClip(selectedAudioAnnotation)
 								? (enabled) => onAudioAnnotationFreezeChange(selectedAudioAnnotation.id, enabled)
 								: undefined
 						}

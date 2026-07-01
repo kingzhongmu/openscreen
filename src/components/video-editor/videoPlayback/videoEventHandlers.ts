@@ -354,7 +354,10 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 			if (!isPlayingRef.current && !video.paused) {
 				video.pause();
 			}
-			emitTime(video.currentTime, holdClock?.getOutputTimeMs());
+			emitTime(
+				video.currentTime,
+				wasHoldSeek ? outputTimeRef.current : holdClock?.getOutputTimeMs(),
+			);
 		}
 	};
 
@@ -396,10 +399,25 @@ export function createVideoEventHandlers(params: VideoEventHandlersParams) {
 		emitTime(video.currentTime, holdClock?.getOutputTimeMs());
 	};
 
+	const resetHoldClockFromSource = (sourceMs: number) => {
+		const clock = ensureHoldClock();
+		clock?.resetFromSource(sourceMs);
+	};
+
+	const resetHoldClockFromOutput = (outputMs: number) => {
+		const clock = ensureHoldClock();
+		clock?.resetFromOutput(outputMs);
+	};
+
+	const getHoldClockOutputTimeMs = () => holdClock?.getOutputTimeMs() ?? 0;
+
 	return {
 		handlePlay,
 		handlePause,
 		handleSeeked,
 		handleSeeking,
+		resetHoldClockFromSource,
+		resetHoldClockFromOutput,
+		getHoldClockOutputTimeMs,
 	};
 }

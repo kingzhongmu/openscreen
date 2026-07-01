@@ -3,6 +3,11 @@ import { useRow } from "dnd-timeline";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+	TIMELINE_ITEM_HEIGHT,
+	TIMELINE_SUBLANE_MIN_HEIGHT,
+	TIMELINE_TRACK_ROW_MIN_HEIGHT,
+} from "./timelineLayout";
 
 interface RowProps extends RowDefinition {
 	children: React.ReactNode;
@@ -42,7 +47,10 @@ export default function Row({
 				"border-b border-white/[0.055] bg-[#101116] relative overflow-hidden",
 				isSubLane && "bg-[#0d0e12]",
 			)}
-			style={{ ...rowWrapperStyle, minHeight: isSubLane ? 30 : 36 }}
+			style={{
+				...rowWrapperStyle,
+				minHeight: isSubLane ? TIMELINE_SUBLANE_MIN_HEIGHT : TIMELINE_TRACK_ROW_MIN_HEIGHT,
+			}}
 		>
 			{background}
 			{laneExpand && (

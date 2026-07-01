@@ -6,6 +6,7 @@ import { useScopedT } from "@/contexts/I18nContext";
 import { cn } from "@/lib/utils";
 import { formatAnnotationClockMs } from "../positionAnnotation";
 import glassStyles from "./ItemGlass.module.css";
+import { TIMELINE_ITEM_HEIGHT } from "./timelineLayout";
 
 interface ItemProps {
 	id: string;
@@ -129,7 +130,7 @@ export default function Item({
 						readOnly ? "cursor-default" : "cursor-grab active:cursor-grabbing",
 						isSelected && glassStyles.selected,
 					)}
-					style={{ height: 30, color: "#fff", minWidth: 24 }}
+					style={{ height: TIMELINE_ITEM_HEIGHT, color: "#fff", minWidth: 24 }}
 					onClick={(event) => {
 						event.stopPropagation();
 						onSelect?.();

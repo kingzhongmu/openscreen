@@ -21,7 +21,7 @@ export interface PositionAnnotationAddRequest {
 interface AddPositionAnnotationMenuProps {
 	disabled?: boolean;
 	onAdd: (request: PositionAnnotationAddRequest) => void;
-	onImportAudio?: () => void;
+	onAddAudioNarration?: () => void;
 	/** Compact icon-only trigger (timeline toolbar). */
 	variant?: "default" | "icon";
 	className?: string;
@@ -60,7 +60,7 @@ function BlurMenuIcon({ className }: { className?: string }) {
 export function AddPositionAnnotationMenu({
 	disabled = false,
 	onAdd,
-	onImportAudio,
+	onAddAudioNarration,
 	variant = "default",
 	className,
 }: AddPositionAnnotationMenuProps) {
@@ -100,7 +100,7 @@ export function AddPositionAnnotationMenu({
 							"h-7 w-7 rounded-lg text-slate-400 hover:text-[#B4A046] hover:bg-[#B4A046]/10 transition-all",
 							className,
 						)}
-						title={t("positionAnnotation.addButton")}
+						title={t("positionAnnotation.addButtonTooltip")}
 					>
 						<MessageSquarePlus className="w-4 h-4" />
 					</Button>
@@ -113,6 +113,7 @@ export function AddPositionAnnotationMenu({
 							"h-8 shrink-0 gap-1.5 rounded-full border-white/10 bg-black/60 px-3 text-[11px] font-medium text-slate-200 backdrop-blur-md hover:bg-black/70 hover:text-white",
 							className,
 						)}
+						title={t("positionAnnotation.addButtonTooltip")}
 					>
 						<MessageSquarePlus className="w-3.5 h-3.5 text-[#B4A046]" />
 						<span>{t("positionAnnotation.addButton")}</span>
@@ -138,9 +139,9 @@ export function AddPositionAnnotationMenu({
 						<span>{item.label}</span>
 					</DropdownMenuItem>
 				))}
-				{onImportAudio && (
+				{onAddAudioNarration && (
 					<DropdownMenuItem
-						onClick={onImportAudio}
+						onClick={onAddAudioNarration}
 						className="text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer gap-2"
 					>
 						<Mic className="w-4 h-4" />

@@ -15,6 +15,7 @@ import {
 	outputSpanToFreezeLinkedSourceSpan,
 	outputSpanToSourceSpan,
 	outputToSourceMs,
+	resolveContinuousSourceTimelineMs,
 	sourceSpanToOutputSpan,
 	sourceToOutputMs,
 } from "@/lib/timelineMapping";
@@ -220,5 +221,13 @@ describe("timelineMapping", () => {
 		expect(sourceToOutputMs(5000, threeHolds)).toBe(13_010);
 		expect(findHoldPlaybackAtOutput(13_010, threeHolds)?.id).toBe("hold-5s");
 		expect(outputToSourceMs(15_000, threeHolds)).toBe(5000);
+	});
+
+	it("keeps continuous source timeline during preview holds for bgm-style audio", () => {
+		expect(resolveContinuousSourceTimelineMs(0, 0, holds)).toBe(0);
+		expect(resolveContinuousSourceTimelineMs(4000, 4000, holds)).toBe(4000);
+		expect(resolveContinuousSourceTimelineMs(6500, 5000, holds)).toBe(6500);
+		expect(resolveContinuousSourceTimelineMs(7999, 5000, holds)).toBe(7999);
+		expect(resolveContinuousSourceTimelineMs(9000, 6000, holds)).toBe(9000);
 	});
 });

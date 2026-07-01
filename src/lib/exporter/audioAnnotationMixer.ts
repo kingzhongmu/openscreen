@@ -1,4 +1,5 @@
 import type { AudioAnnotationClip, HoldRegion } from "@/components/video-editor/types";
+import { isBgmAudioClip } from "@/lib/audioAnnotation";
 import { sourceToOutputMs } from "@/lib/timelineMapping";
 import { getOutputAudioDurationSec, renderBaseAudioOnOutputTimeline } from "./holdAudioExport";
 
@@ -128,7 +129,7 @@ export async function mixAudioAnnotationClips(
 		}
 
 		const startSec =
-			holdRegions.length > 0
+			holdRegions.length > 0 && !isBgmAudioClip(clip)
 				? sourceToOutputMs(clip.anchorMs, holdRegions) / 1000
 				: clip.anchorMs / 1000;
 		const playDurationSec = Math.min(

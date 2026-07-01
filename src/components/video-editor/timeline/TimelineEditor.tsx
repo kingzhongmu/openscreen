@@ -5,6 +5,7 @@ import {
 	Check,
 	ChevronDown,
 	Gauge,
+	Music,
 	Plus,
 	ScanEye,
 	Scissors,
@@ -38,7 +39,12 @@ import {
 	formatHoldSegmentTimelineLabel,
 	formatRegularAnnotationTimelineLabel,
 } from "@/lib/annotationTabKind";
-import { isLinkedAnnotationAudioClipId, linkedAnnotationAudioClipId } from "@/lib/audioAnnotation";
+import {
+	bgmClipToOutputSpan,
+	isBgmAudioClip,
+	linkedAnnotationAudioClipId,
+	outputSpanToBgmClipSpan,
+} from "@/lib/audioAnnotation";
 import {
 	effectiveDurationMs,
 	findHoldCollectionByShellId,
@@ -151,7 +157,7 @@ interface TimelineEditorProps {
 	) => void;
 	onHoldSegmentDelete?: (collectionId: string, segmentId: string) => void;
 	onHoldCollectionTotalDurationChange?: (shellAnnotationId: string, durationMs: number) => void;
-	onSeek?: (time: number) => void;
+	onSeek?: (time: number, outputMs?: number) => void;
 	zoomRegions: ZoomRegion[];
 	onZoomAdded: (span: Span) => void;
 	/** Magic-wand auto-zoom toggle state + handler. */
@@ -181,7 +187,8 @@ interface TimelineEditorProps {
 	onAudioAnnotationDelete?: (id: string) => void;
 	selectedAudioAnnotationId?: string | null;
 	onSelectAudioAnnotation?: (id: string | null) => void;
-	onImportAudio?: () => void;
+	onImportBgm?: () => void;
+	onAddAudioNarration?: () => void;
 	blurRegions?: AnnotationRegion[];
 	onBlurSpanChange?: (id: string, span: Span) => void;
 	onBlurDelete?: (id: string) => void;
@@ -551,7 +558,7 @@ function PlaybackCursor({
 }: {
 	currentTimeMs: number;
 	videoDurationMs: number;
-	onSeek?: (time: number) => void;
+	onSeek?: (time: number, outputMs?: number) => void;
 	onRangeChange?: (updater: (previous: Range) => Range) => void;
 	timelineRef: React.RefObject<HTMLDivElement>;
 	keyframes?: { id: string; time: number }[];
@@ -869,7 +876,7 @@ function Timeline({
 	timelineReadOnly?: boolean;
 	expandedClustersByTrack: Record<string, string>;
 	onToggleClusterExpand: (trackId: string, clusterId: string) => void;
-	onSeek?: (time: number) => void;
+	onSeek?: (time: number, outputMs?: number) => void;
 	onRangeChange?: (updater: (previous: Range) => Range) => void;
 	onSelectZoom?: (id: string | null) => void;
 	onSelectTrim?: (id: string | null) => void;
@@ -1446,7 +1453,7 @@ function Timeline({
 						isSelected={item.id === selectedAnnotationId}
 						onSelect={() => onSelectAnnotation?.(item.id)}
 						variant="annotation"
-						readOnly={timelineReadOnly}
+						readOnly={false}
 					>
 						{item.label}
 					</Item>
@@ -1456,7 +1463,7 @@ function Timeline({
 			<Row
 				id={AUDIO_ANNOTATION_ROW_ID}
 				isEmpty={audioAnnotationItems.length === 0}
-				hint={t("hints.pressAudioAnnotation")}
+				hint={t("hints.pressBgm")}
 			>
 				{audioAnnotationItems.map((item) => (
 					<Item
@@ -1467,7 +1474,7 @@ function Timeline({
 						isSelected={item.id === selectedAudioAnnotationId}
 						onSelect={() => onSelectAudioAnnotation?.(item.id)}
 						variant="audio"
-						readOnly={timelineReadOnly}
+						readOnly={false}
 					>
 						{item.label}
 					</Item>
@@ -1560,7 +1567,8 @@ export default function TimelineEditor({
 	onAudioAnnotationDelete,
 	selectedAudioAnnotationId,
 	onSelectAudioAnnotation,
-	onImportAudio,
+	onImportBgm,
+	onAddAudioNarration,
 	blurRegions = [],
 	onBlurSpanChange,
 	onBlurDelete,
@@ -1664,7 +1672,31 @@ export default function TimelineEditor({
 		[timelineScale.minItemDurationMs, totalMs],
 	);
 
-	const toSourceSpanFromTimeline = useCallback((_id: string, span: Span): Span => span, []);
+	const toSourceSpanFromTimeline = useCallback(
+		(id: string, span: Span): Span => {
+			if (!usesOutputTimelineAxis) {
+				return span;
+			}
+			const clip = audioAnnotationClips.find((entry) => entry.id === id);
+			if (clip && isBgmAudioClip(clip)) {
+				const converted = outputSpanToBgmClipSpan(span.start, span.end, holdRegions);
+				return {
+					start: converted.anchorMs,
+					end: converted.anchorMs + converted.durationMs,
+				};
+			}
+			if (annotationRegions.some((region) => region.id === id)) {
+				const sourceSpan = outputSpanToFreezeLinkedSourceSpan(
+					Math.round(span.start),
+					Math.round(span.end),
+					holdRegions,
+				);
+				return { start: sourceSpan.start, end: sourceSpan.end };
+			}
+			return span;
+		},
+		[usesOutputTimelineAxis, audioAnnotationClips, annotationRegions, holdRegions],
+	);
 
 	const [range, setRange] = useState<Range>(() => createInitialRange(totalMs));
 	const [keyframes, setKeyframes] = useState<{ id: string; time: number }[]>([]);
@@ -1787,8 +1819,9 @@ export default function TimelineEditor({
 				return;
 			}
 			if (usesOutputTimelineAxis) {
-				const sourceMs = outputToSourceMs(Math.round(timeSec * 1000), holdRegions);
-				onSeek(sourceMs / 1000);
+				const outputMs = Math.round(timeSec * 1000);
+				const sourceMs = outputToSourceMs(outputMs, holdRegions);
+				onSeek(sourceMs / 1000, outputMs);
 				return;
 			}
 			onSeek(timeSec);
@@ -2344,9 +2377,11 @@ export default function TimelineEditor({
 			});
 
 		const audioAnnotations: TimelineRenderItem[] = audioAnnotationClips
-			.filter((clip) => !clip.freezeDuringAnnotation && !isLinkedAnnotationAudioClipId(clip.id))
+			.filter((clip) => isBgmAudioClip(clip))
 			.map((clip, index) => {
-				const span = mapSpanToTimeline(clip.anchorMs, clip.anchorMs + clip.durationMs);
+				const span = usesOutputTimelineAxis
+					? bgmClipToOutputSpan(clip.anchorMs, clip.durationMs, holdRegions, sourceDurationMs)
+					: { start: clip.anchorMs, end: clip.anchorMs + clip.durationMs };
 				return {
 					id: clip.id,
 					rowId: AUDIO_ANNOTATION_ROW_ID,
@@ -2355,8 +2390,8 @@ export default function TimelineEditor({
 						? clip.fileName.length > 20
 							? `${clip.fileName.substring(0, 20)}...`
 							: clip.fileName
-						: t("labels.audioAnnotationItem", { index: String(index + 1) }),
-					variant: "audio",
+						: t("labels.bgmItem", { index: String(index + 1) }),
+					variant: "audio" as const,
 				};
 			});
 
@@ -2457,6 +2492,8 @@ export default function TimelineEditor({
 		mapFreezeSpanToTimeline,
 		holdCollections,
 		holdRegions,
+		usesOutputTimelineAxis,
+		sourceDurationMs,
 		t,
 	]);
 
@@ -2507,14 +2544,24 @@ export default function TimelineEditor({
 	const keyframeTimesMs = useMemo(() => keyframes.map((kf) => kf.time), [keyframes]);
 
 	const collectionShellIds = useMemo(
-		() =>
-			new Set(
-				holdCollections
-					.map((collection) => collection.shellAnnotationId)
-					.filter(Boolean) as string[],
-			),
+		() => new Set(holdCollections.map((collection) => resolveHoldCollectionShellId(collection))),
 		[holdCollections],
 	);
+
+	const previewEditableItemIds = useMemo(() => {
+		const ids = new Set<string>();
+		for (const region of annotationRegions) {
+			if (!region.freezeDuringAnnotation) {
+				ids.add(region.id);
+			}
+		}
+		for (const clip of audioAnnotationClips) {
+			if (isBgmAudioClip(clip)) {
+				ids.add(clip.id);
+			}
+		}
+		return ids;
+	}, [annotationRegions, audioAnnotationClips]);
 
 	const handleItemSpanChange = useCallback(
 		(id: string, span: Span) => {
@@ -2563,6 +2610,19 @@ export default function TimelineEditor({
 						const durationMs = Math.max(500, Math.round(span.end - span.start));
 						onHoldCollectionTotalDurationChange(id, durationMs);
 					}
+					return;
+				}
+
+				if (usesOutputTimelineAxis && previewEditableItemIds.has(id)) {
+					const sourceSpan = toSourceSpanFromTimeline(id, span);
+					if (annotationRegions.some((region) => region.id === id)) {
+						onAnnotationSpanChange?.(id, sourceSpan);
+						return;
+					}
+					if (audioAnnotationClips.some((clip) => clip.id === id)) {
+						onAudioAnnotationSpanChange?.(id, sourceSpan);
+						return;
+					}
 				}
 				return;
 			}
@@ -2598,6 +2658,7 @@ export default function TimelineEditor({
 			onAudioAnnotationSpanChange,
 			onBlurSpanChange,
 			timelineReadOnly,
+			previewEditableItemIds,
 			onHoldSegmentDurationChange,
 			onHoldSegmentSpanChange,
 			onHoldCollectionTotalDurationChange,
@@ -2681,8 +2742,18 @@ export default function TimelineEditor({
 						disabled={timelineReadOnly || !videoDuration || videoDuration === 0}
 						variant="icon"
 						onAdd={({ type, freeze }) => handleAddAnnotation(type, { freeze })}
-						onImportAudio={onImportAudio}
+						onAddAudioNarration={onAddAudioNarration}
 					/>
+					<Button
+						onClick={onImportBgm}
+						disabled={timelineReadOnly || !videoDuration || videoDuration === 0 || !onImportBgm}
+						variant="ghost"
+						size="icon"
+						className="h-7 w-7 rounded-lg text-slate-400 hover:text-[#a78bfa] hover:bg-[#a78bfa]/10 transition-all"
+						title={t("buttons.addBgm")}
+					>
+						<Music className="w-4 h-4" />
+					</Button>
 					<Button
 						onClick={handleAddSpeed}
 						disabled={timelineReadOnly}
@@ -2801,7 +2872,7 @@ export default function TimelineEditor({
 			>
 				<TimelineWrapper
 					range={clampedRange}
-					videoDuration={videoDuration}
+					videoDuration={totalMs / 1000}
 					hasOverlap={hasOverlap}
 					onRangeChange={setRange}
 					minItemDurationMs={timelineScale.minItemDurationMs}
@@ -2813,7 +2884,9 @@ export default function TimelineEditor({
 					keyframeTimesMs={keyframeTimesMs}
 					readOnly={timelineReadOnly}
 					isItemEditable={(id) =>
-						collectionShellIds.has(id) || parseHoldSegmentTimelineId(id) !== null
+						collectionShellIds.has(id) ||
+						parseHoldSegmentTimelineId(id) !== null ||
+						previewEditableItemIds.has(id)
 					}
 				>
 					<KeyframeMarkers

@@ -1,4 +1,5 @@
 import { normalizeTextAnimation } from "@/lib/annotationTextAnimation";
+import { isLinkedAnnotationAudioClipId } from "@/lib/audioAnnotation";
 import { normalizePersistedAudioUrl } from "@/lib/audioAnnotationPersistence";
 import { normalizeBlurColor, normalizeBlurType } from "@/lib/blurEffects";
 import { normalizeCursorThemeId } from "@/lib/cursor/cursorThemes";
@@ -362,6 +363,10 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 							? Math.max(1, Math.round(clip.sourceDurationMs))
 							: undefined,
 						volume,
+						...(clip.role === "bgm" ||
+						(!isLinkedAnnotationAudioClipId(clip.id) && !clip.freezeDuringAnnotation)
+							? { role: "bgm" as const }
+							: {}),
 						...(clip.freezeDuringAnnotation ? { freezeDuringAnnotation: true as const } : {}),
 					};
 				})

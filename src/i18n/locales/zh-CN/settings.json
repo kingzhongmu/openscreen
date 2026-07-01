@@ -209,6 +209,15 @@
 		"invalidFileType": "无效的文件类型",
 		"failedToLoad": "无法加载音频文件"
 	},
+	"bgm": {
+		"title": "背景音乐",
+		"active": "活动",
+		"fileName": "文件",
+		"untitled": "未命名音乐",
+		"replaceFile": "替换音乐",
+		"volume": "音量",
+		"delete": "删除背景音乐"
+	},
 	"fontStyles": {
 		"classic": "经典",
 		"editor": "编辑器",

@@ -218,11 +218,16 @@ export type AnnotationType = "text" | "image" | "figure" | "blur";
 
 export type AudioAnnotationSource = "import";
 
+/** Standalone timeline clips only; linked narration clips omit role (identified by id prefix). */
+export type AudioAnnotationRole = "bgm";
+
 export interface AudioAnnotationClip {
 	id: string;
 	anchorMs: number;
 	durationMs: number;
 	source: AudioAnnotationSource;
+	/** Standalone clips on the BGM row; legacy imports without role are treated as BGM. */
+	role?: AudioAnnotationRole;
 	audioUrl: string;
 	/** Absolute path on disk when imported in Electron; used when saving the project. */
 	sourceFilePath?: string;
@@ -415,11 +420,11 @@ export const DEFAULT_ANNOTATION_STYLE: AnnotationTextStyle = {
 
 export const DEFAULT_FIGURE_DATA: FigureData = {
 	arrowDirection: "right",
-	color: "#34B27B",
-	shaftWidth: 30,
-	shaftLength: 80,
-	headWidth: 40,
-	headLength: 30,
+	color: "#ffd700",
+	shaftWidth: 25,
+	shaftLength: 83,
+	headWidth: 70,
+	headLength: 44,
 	arrowAnimation: "none",
 };
 

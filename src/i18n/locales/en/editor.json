@@ -80,11 +80,12 @@
 	},
 	"positionAnnotation": {
 		"addButton": "Add Annotation",
+		"addButtonTooltip": "Overlay annotation (A) · Hold collection (Shift+A)",
 		"typeText": "Text",
 		"typeArrow": "Arrow",
 		"typeImage": "Image",
 		"typeAudio": "Audio Narration",
-		"typeFreezeText": "Freeze-frame text"
+		"typeFreezeText": "Hold collection"
 	},
 	"audioAnnotation": {
 		"invalidFileType": "Please upload an MP3 or WAV file.",

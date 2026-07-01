@@ -5,13 +5,14 @@
 		"addTrim": "添加剪辑 (T)",
 		"addAnnotation": "添加标注 (A)",
 		"addSpeed": "添加速度 (S)",
-		"addBlur": "添加模糊 (B)"
+		"addBlur": "添加模糊 (B)",
+		"addBgm": "添加背景音乐"
 	},
 	"hints": {
 		"pressZoom": "按 Z 添加缩放",
 		"pressTrim": "按 T 添加剪辑",
 		"pressAnnotation": "按 A 添加标注",
-		"pressAudioAnnotation": "在播放头处导入音频",
+		"pressBgm": "点击 ♪ 添加背景音乐",
 		"pressSpeed": "按 S 添加速度",
 		"pressBlur": "按 B 添加模糊区域",
 		"holdSegments": "定帧批注；多步骤集合可展开子轨编辑",
@@ -41,6 +42,7 @@
 		"speedItem": "速度 {{index}}",
 		"annotationItem": "标注",
 		"audioAnnotationItem": "音频 {{index}}",
+		"bgmItem": "背景音乐 {{index}}",
 		"imageItem": "图片",
 		"emptyText": "空文本",
 		"arrowItem": "箭头",

@@ -184,6 +184,28 @@ export function isOutputTimeInHold(outputMs: number, holdRegions: HoldRegion[]):
 	return findHoldPlaybackAtOutput(outputMs, holdRegions) !== null;
 }
 
+/**
+ * Source-axis playback clock for audio that must not pause during preview holds (e.g. BGM).
+ * While the video frame is frozen, this clock keeps advancing with output time.
+ */
+export function resolveContinuousSourceTimelineMs(
+	outputMs: number,
+	sourceTimeMs: number,
+	holdRegions: HoldRegion[],
+): number {
+	if (holdRegions.length === 0) {
+		return sourceTimeMs;
+	}
+
+	const activeHold = findHoldPlaybackAtOutput(outputMs, holdRegions);
+	if (activeHold) {
+		const span = getHoldPlaybackOutputSpan(activeHold, holdRegions);
+		return activeHold.sourceMs + (outputMs - span.start);
+	}
+
+	return sourceToOutputMs(sourceTimeMs, holdRegions);
+}
+
 export function getHoldRegionAtSourceMs(
 	sourceMs: number,
 	holdRegions: HoldRegion[],
