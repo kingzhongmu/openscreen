@@ -43,6 +43,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useScopedT } from "@/contexts/I18nContext";
 import { getAssetPath } from "@/lib/assetPath";
+import { linkedAnnotationAudioClipId, linkedAnnotationAudioFromClip } from "@/lib/audioAnnotation";
 import { WEBCAM_LAYOUT_PRESETS } from "@/lib/compositeLayout";
 import { CURSOR_THEMES, DEFAULT_CURSOR_THEME_ID } from "@/lib/cursor/cursorThemes";
 import type { ExportFormat, ExportQuality, GifFrameRate, GifSizePreset } from "@/lib/exporter";
@@ -55,6 +56,7 @@ import {
 	findHoldCollectionByShellId,
 	holdCollectionSegmentToOutputSpan,
 	segmentOffsetMs,
+	shellAnnotationFromCollection,
 } from "@/lib/holdCollection";
 import { segmentContentToAnnotationRegion } from "@/lib/holdCollectionTimeline";
 import { cn } from "@/lib/utils";
@@ -324,7 +326,24 @@ interface SettingsPanelProps {
 		durationMs: number,
 	) => void;
 	onHoldSegmentContentChange?: (collectionId: string, segmentId: string, content: string) => void;
-	onHoldSegmentTypeChange?: (collectionId: string, segmentId: string, type: AnnotationType) => void;
+	onHoldSegmentTypeChange?: (
+		collectionId: string,
+		segmentId: string,
+		kind: import("./types").AnnotationType | "audio",
+	) => void;
+	onHoldSegmentAudioReplace?: (
+		collectionId: string,
+		segmentId: string,
+		audioUrl: string,
+		fileName: string,
+		sourceDurationMs: number,
+		sourceFilePath?: string,
+	) => void;
+	onHoldSegmentAudioVolumeChange?: (
+		collectionId: string,
+		segmentId: string,
+		volume: number,
+	) => void;
 	onHoldSegmentStyleChange?: (
 		collectionId: string,
 		segmentId: string,
@@ -336,8 +355,20 @@ interface SettingsPanelProps {
 		figureData: FigureData,
 	) => void;
 	onHoldSegmentDelete?: (collectionId: string, segmentId: string) => void;
+	onHoldSegmentDuplicate?: (collectionId: string, segmentId: string) => void;
 	onAnnotationContentChange?: (id: string, content: string) => void;
 	onAnnotationTypeChange?: (id: string, type: AnnotationType) => void;
+	onAnnotationAudioModeChange?: (id: string) => void;
+	onLinkedAnnotationAudioReplace?: (
+		id: string,
+		audioUrl: string,
+		fileName: string,
+		sourceDurationMs: number,
+		sourceFilePath?: string,
+	) => void;
+	onLinkedAnnotationAudioVolumeChange?: (id: string, volume: number) => void;
+	inspectorTabKind?: import("@/lib/annotationTabKind").AnnotationTabKind;
+	onInspectorTabKindChange?: (kind: import("@/lib/annotationTabKind").AnnotationTabKind) => void;
 	onAnnotationStyleChange?: (id: string, style: Partial<AnnotationRegion["style"]>) => void;
 	onAnnotationFigureDataChange?: (id: string, figureData: FigureData) => void;
 	onAnnotationDuplicate?: (id: string) => void;
@@ -497,11 +528,19 @@ export function SettingsPanel({
 	onHoldSegmentDurationChange,
 	onHoldSegmentContentChange,
 	onHoldSegmentTypeChange,
+	onHoldSegmentAudioReplace,
+	onHoldSegmentAudioVolumeChange,
 	onHoldSegmentStyleChange,
 	onHoldSegmentFigureDataChange,
 	onHoldSegmentDelete,
+	onHoldSegmentDuplicate,
 	onAnnotationContentChange,
 	onAnnotationTypeChange,
+	onAnnotationAudioModeChange,
+	onLinkedAnnotationAudioReplace,
+	onLinkedAnnotationAudioVolumeChange,
+	inspectorTabKind,
+	onInspectorTabKindChange,
 	onAnnotationStyleChange,
 	onAnnotationFigureDataChange,
 	onAnnotationDuplicate,
@@ -810,12 +849,12 @@ export function SettingsPanel({
 		}
 	};
 
-	const selectedAnnotation = selectedAnnotationId
-		? annotationRegions.find((a) => a.id === selectedAnnotationId)
-		: null;
 	const selectedHoldCollection = selectedAnnotationId
 		? findHoldCollectionByShellId(holdCollections, selectedAnnotationId)
 		: undefined;
+	const selectedAnnotation =
+		(selectedAnnotationId ? annotationRegions.find((a) => a.id === selectedAnnotationId) : null) ??
+		(selectedHoldCollection ? shellAnnotationFromCollection(selectedHoldCollection) : null);
 	const parsedHoldSegmentKey = selectedHoldSegmentKey?.split(":") ?? [];
 	const selectedHoldSegmentCollection =
 		parsedHoldSegmentKey.length === 2
@@ -833,6 +872,19 @@ export function SettingsPanel({
 					(segment) => segment.id === selectedHoldSegment.id,
 				)
 			: -1;
+	const activeHoldCollectionSegment =
+		selectedHoldCollection &&
+		selectedHoldSegmentCollection?.id === selectedHoldCollection.id &&
+		selectedHoldSegment
+			? selectedHoldSegment
+			: selectedHoldCollection?.segments[0];
+	const linkedAnnotationAudioClip = selectedAnnotation
+		? audioAnnotationClips.find(
+				(clip) => clip.id === linkedAnnotationAudioClipId(selectedAnnotation.id),
+			)
+		: undefined;
+	const linkedAnnotationAudioActive = Boolean(linkedAnnotationAudioClip);
+	const linkedAnnotationAudio = linkedAnnotationAudioFromClip(linkedAnnotationAudioClip);
 	const selectedAudioAnnotation = selectedAudioAnnotationId
 		? audioAnnotationClips.find((clip) => clip.id === selectedAudioAnnotationId)
 		: null;
@@ -953,6 +1005,7 @@ export function SettingsPanel({
 						annotation={segmentAnnotation}
 						holdCollection={selectedHoldSegmentCollection}
 						holdCollectionSegmentIndex={selectedHoldSegmentIndex}
+						highlightHoldSegmentId={selectedHoldSegment.id}
 						contentReadOnly={contentReadOnly}
 						videoDurationMs={videoDurationMs}
 						onContentChange={
@@ -965,14 +1018,30 @@ export function SettingsPanel({
 											content,
 										)
 						}
-						onTypeChange={
+						onTabKindChange={contentReadOnly ? undefined : onInspectorTabKindChange}
+						activeTabKind={inspectorTabKind}
+						holdSegmentAudio={selectedHoldSegment.audio}
+						onHoldSegmentAudioReplace={
 							contentReadOnly
 								? undefined
-								: (type) =>
-										onHoldSegmentTypeChange?.(
+								: (audioUrl, fileName, sourceDurationMs, sourceFilePath) =>
+										onHoldSegmentAudioReplace?.(
 											selectedHoldSegmentCollection.id,
 											selectedHoldSegment.id,
-											type,
+											audioUrl,
+											fileName,
+											sourceDurationMs,
+											sourceFilePath,
+										)
+						}
+						onHoldSegmentAudioVolumeChange={
+							contentReadOnly
+								? undefined
+								: (volume) =>
+										onHoldSegmentAudioVolumeChange?.(
+											selectedHoldSegmentCollection.id,
+											selectedHoldSegment.id,
+											volume,
 										)
 						}
 						onStyleChange={
@@ -1025,6 +1094,12 @@ export function SettingsPanel({
 								? () => onHoldCollectionAppendSegment(selectedHoldSegmentCollection.id)
 								: undefined
 						}
+						onDuplicate={
+							!contentReadOnly && onHoldSegmentDuplicate
+								? () =>
+										onHoldSegmentDuplicate(selectedHoldSegmentCollection.id, selectedHoldSegment.id)
+								: undefined
+						}
 						segmentOffsetStartMs={offsetStart}
 						outputSpan={outputSpan}
 					/>
@@ -1057,9 +1132,58 @@ export function SettingsPanel({
 						annotation={selectedAnnotation}
 						holdCollection={selectedHoldCollection}
 						contentReadOnly={editorReadOnly && Boolean(selectedHoldCollection)}
+						highlightHoldSegmentId={activeHoldCollectionSegment?.id}
 						videoDurationMs={videoDurationMs}
 						onContentChange={(content) => onAnnotationContentChange(selectedAnnotation.id, content)}
-						onTypeChange={(type) => onAnnotationTypeChange(selectedAnnotation.id, type)}
+						onTabKindChange={onInspectorTabKindChange}
+						activeTabKind={inspectorTabKind}
+						holdSegmentAudio={activeHoldCollectionSegment?.audio}
+						linkedAnnotationAudio={selectedHoldCollection ? undefined : linkedAnnotationAudio}
+						linkedAnnotationAudioActive={
+							selectedHoldCollection ? false : linkedAnnotationAudioActive
+						}
+						onHoldSegmentAudioReplace={
+							selectedHoldCollection && activeHoldCollectionSegment && onHoldSegmentAudioReplace
+								? (audioUrl, fileName, sourceDurationMs, sourceFilePath) =>
+										onHoldSegmentAudioReplace(
+											selectedHoldCollection.id,
+											activeHoldCollectionSegment.id,
+											audioUrl,
+											fileName,
+											sourceDurationMs,
+											sourceFilePath,
+										)
+								: undefined
+						}
+						onHoldSegmentAudioVolumeChange={
+							selectedHoldCollection &&
+							activeHoldCollectionSegment &&
+							onHoldSegmentAudioVolumeChange
+								? (volume) =>
+										onHoldSegmentAudioVolumeChange(
+											selectedHoldCollection.id,
+											activeHoldCollectionSegment.id,
+											volume,
+										)
+								: undefined
+						}
+						onLinkedAnnotationAudioReplace={
+							!selectedHoldCollection && onLinkedAnnotationAudioReplace
+								? (audioUrl, fileName, sourceDurationMs, sourceFilePath) =>
+										onLinkedAnnotationAudioReplace(
+											selectedAnnotation.id,
+											audioUrl,
+											fileName,
+											sourceDurationMs,
+											sourceFilePath,
+										)
+								: undefined
+						}
+						onLinkedAnnotationAudioVolumeChange={
+							!selectedHoldCollection && onLinkedAnnotationAudioVolumeChange
+								? (volume) => onLinkedAnnotationAudioVolumeChange(selectedAnnotation.id, volume)
+								: undefined
+						}
 						onStyleChange={(style) => onAnnotationStyleChange(selectedAnnotation.id, style)}
 						onDurationChange={
 							onAnnotationDurationChange &&
@@ -1078,7 +1202,18 @@ export function SettingsPanel({
 								: undefined
 						}
 						onDuplicate={
-							onAnnotationDuplicate ? () => onAnnotationDuplicate(selectedAnnotation.id) : undefined
+							selectedHoldCollection &&
+							activeHoldCollectionSegment &&
+							onHoldSegmentDuplicate &&
+							!(editorReadOnly && Boolean(selectedHoldCollection))
+								? () =>
+										onHoldSegmentDuplicate(
+											selectedHoldCollection.id,
+											activeHoldCollectionSegment.id,
+										)
+								: onAnnotationDuplicate
+									? () => onAnnotationDuplicate(selectedAnnotation.id)
+									: undefined
 						}
 						onAppendHoldSegment={
 							selectedHoldCollection && onHoldCollectionAppendSegment

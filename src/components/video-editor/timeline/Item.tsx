@@ -20,6 +20,10 @@ interface ItemProps {
 	isAutoFocus?: boolean;
 	variant?: "zoom" | "trim" | "annotation" | "speed" | "blur" | "audio" | "hold";
 	readOnly?: boolean;
+	/** Second line for hold segment items (relative or mapped time). */
+	secondaryLabel?: string;
+	/** Hide the default span time row (used by hold collection segment sub-lanes). */
+	suppressTimeLabel?: boolean;
 }
 
 // Map zoom depth to multiplier labels
@@ -54,6 +58,8 @@ export default function Item({
 	isAutoFocus = false,
 	variant = "zoom",
 	readOnly = false,
+	secondaryLabel,
+	suppressTimeLabel = false,
 	children,
 }: ItemProps) {
 	const t = useScopedT("timeline");
@@ -68,6 +74,7 @@ export default function Item({
 	const isSpeed = variant === "speed";
 	const isAudio = variant === "audio";
 	const isHold = variant === "hold";
+	const showTimeLabel = !suppressTimeLabel && !(isHold && secondaryLabel);
 
 	const glassClass = isHold
 		? glassStyles.glassHold
@@ -183,12 +190,26 @@ export default function Item({
 									</span>
 								</>
 							) : isHold ? (
-								<>
-									<Pause className="w-3.5 h-3.5 shrink-0" />
-									<span className="text-[11px] font-semibold truncate whitespace-nowrap">
-										{children}
-									</span>
-								</>
+								secondaryLabel ? (
+									<div className="flex min-w-0 flex-col items-center gap-0.5 leading-tight">
+										<div className="flex max-w-full items-center gap-1.5">
+											<Pause className="w-3.5 h-3.5 shrink-0" />
+											<span className="truncate text-[10px] font-semibold whitespace-nowrap">
+												{children}
+											</span>
+										</div>
+										<span className="max-w-full truncate text-[8px] opacity-70 whitespace-nowrap">
+											{secondaryLabel}
+										</span>
+									</div>
+								) : (
+									<>
+										<Pause className="w-3.5 h-3.5 shrink-0" />
+										<span className="text-[11px] font-semibold truncate whitespace-nowrap">
+											{children}
+										</span>
+									</>
+								)
 							) : isAudio ? (
 								<>
 									<Mic className="w-3.5 h-3.5 shrink-0" />
@@ -205,13 +226,15 @@ export default function Item({
 								</>
 							)}
 						</div>
-						<span
-							className={`text-[9px] tabular-nums tracking-tight whitespace-nowrap transition-opacity ${
-								isSelected ? "opacity-60" : "opacity-0 group-hover:opacity-40"
-							}`}
-						>
-							{timeLabel}
-						</span>
+						{showTimeLabel ? (
+							<span
+								className={`text-[9px] tabular-nums tracking-tight whitespace-nowrap transition-opacity ${
+									isSelected ? "opacity-60" : "opacity-0 group-hover:opacity-40"
+								}`}
+							>
+								{timeLabel}
+							</span>
+						) : null}
 					</div>
 				</div>
 			</div>

@@ -31,9 +31,18 @@ import {
 	saveAnnotationTextStylePreset,
 } from "@/lib/annotationPreferences";
 import {
+	ANNOTATION_TAB_KIND_BY_KEY,
+	type AnnotationTabKind,
+	cycleAnnotationTabKind,
+	deriveInspectorTabKind,
+} from "@/lib/annotationTabKind";
+import {
 	buildAudioAnnotationClip,
+	buildLinkedAnnotationAudioClip,
 	getAudioFileDurationMs,
 	isAcceptedAudioAnnotationFile,
+	linkedAnnotationAudioClipId,
+	syncLinkedAnnotationAudioClipSpan,
 } from "@/lib/audioAnnotation";
 import {
 	applyPersistedAudioClipPaths,
@@ -72,16 +81,22 @@ import {
 	applyShellAnnotationEditsToCollection,
 	createHoldCollection,
 	DEFAULT_HOLD_COLLECTION_FIRST_SEGMENT_MS,
+	duplicateHoldCollectionSegment,
+	effectiveDurationMs,
 	findHoldCollectionByShellId,
+	type HoldCollectionSegmentKind,
 	removeHoldCollectionsByShellId,
 	setHoldCollectionFirstSegmentDuration,
+	setHoldCollectionSegmentKind,
+	setHoldCollectionShellDuration,
 	syncShellAnnotationsFromHoldCollections,
+	updateHoldCollectionSegmentAudio,
 } from "@/lib/holdCollection";
 import {
 	removeHoldCollectionSegment,
 	setHoldCollectionSegmentDuration,
 	setHoldCollectionSegmentPairDurations,
-	setHoldCollectionTotalDuration,
+	setHoldCollectionSegmentTiming,
 	updateHoldCollectionSegmentContent,
 } from "@/lib/holdCollectionTimeline";
 import { alignAllFreezeAnchors, syncHoldRegionsFromEditor } from "@/lib/holdRegions";
@@ -117,6 +132,7 @@ import {
 	buildPositionAnnotationRegion,
 	computePositionAnnotationSpan,
 	DEFAULT_POSITION_ANNOTATION_DURATION_MS,
+	MAX_POSITION_ANNOTATION_DURATION_MS,
 	MIN_POSITION_ANNOTATION_DURATION_MS,
 } from "./positionAnnotation";
 import {
@@ -334,6 +350,7 @@ export default function VideoEditor() {
 	const [selectedSpeedId, setSelectedSpeedId] = useState<string | null>(null);
 	const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
 	const [selectedHoldSegmentKey, setSelectedHoldSegmentKey] = useState<string | null>(null);
+	const [inspectorTabKind, setInspectorTabKind] = useState<AnnotationTabKind | null>(null);
 	const [selectedAudioAnnotationId, setSelectedAudioAnnotationId] = useState<string | null>(null);
 	const [selectedBlurId, setSelectedBlurId] = useState<string | null>(null);
 	const [isExporting, setIsExporting] = useState(false);
@@ -1681,13 +1698,13 @@ export default function VideoEditor() {
 			pushState((prev) => {
 				const collection = findHoldCollectionByShellId(prev.holdCollections, id);
 				if (collection) {
-					const updated =
-						collection.segments.length === 1
-							? setHoldCollectionFirstSegmentDuration(
-									{ ...collection, sourceMs: startMs },
-									durationMs,
-								)
-							: setHoldCollectionTotalDuration({ ...collection, sourceMs: startMs }, durationMs);
+					let updated = collection;
+					if (Math.abs(durationMs - effectiveDurationMs(collection)) >= 1) {
+						updated = setHoldCollectionShellDuration(updated, durationMs);
+					}
+					if (startMs !== collection.sourceMs) {
+						updated = { ...updated, sourceMs: startMs };
+					}
 					return withSyncedHoldRegions(prev, {
 						holdCollections: (prev.holdCollections ?? []).map((entry) =>
 							entry.id === collection.id ? updated : entry,
@@ -1709,6 +1726,12 @@ export default function VideoEditor() {
 				);
 				return withSyncedHoldRegions(prev, {
 					annotationRegions: editedAutoCaption ? reconcileAutoCaptionTimelineGaps(next) : next,
+					audioAnnotationClips: syncLinkedAnnotationAudioClipSpan(
+						prev.audioAnnotationClips,
+						id,
+						startMs,
+						durationMs,
+					),
 				});
 			});
 		},
@@ -1724,7 +1747,7 @@ export default function VideoEditor() {
 					const updated =
 						collection.segments.length === 1
 							? setHoldCollectionFirstSegmentDuration(collection, durationMs)
-							: setHoldCollectionTotalDuration(collection, durationMs);
+							: setHoldCollectionShellDuration(collection, durationMs);
 					return withSyncedHoldRegions(prev, {
 						holdCollections: (prev.holdCollections ?? []).map((entry) =>
 							entry.id === collection.id ? updated : entry,
@@ -1749,6 +1772,12 @@ export default function VideoEditor() {
 				);
 				return withSyncedHoldRegions(prev, {
 					annotationRegions: editedAutoCaption ? reconcileAutoCaptionTimelineGaps(next) : next,
+					audioAnnotationClips: syncLinkedAnnotationAudioClipSpan(
+						prev.audioAnnotationClips,
+						id,
+						source.startMs,
+						span.end - source.startMs,
+					),
 				});
 			});
 		},
@@ -2110,7 +2139,7 @@ export default function VideoEditor() {
 				if (!collection) {
 					return prev;
 				}
-				const updated = setHoldCollectionTotalDuration(collection, durationMs);
+				const updated = setHoldCollectionShellDuration(collection, durationMs);
 				return withSyncedHoldRegions(prev, {
 					holdCollections: (prev.holdCollections ?? []).map((entry) =>
 						entry.id === collection.id ? updated : entry,
@@ -2121,15 +2150,32 @@ export default function VideoEditor() {
 		[pushState],
 	);
 
-	const handleHoldCollectionAppendSegment = useCallback(
-		(collectionId: string, type: AnnotationRegion["type"] = "text") => {
+	const handleHoldSegmentSpanChange = useCallback(
+		(collectionId: string, segmentId: string, offsetMs: number, durationMs: number) => {
 			pushState((prev) =>
 				updateHoldCollectionById(prev, collectionId, (collection) =>
-					appendHoldCollectionSegment(collection, type),
+					setHoldCollectionSegmentTiming(collection, segmentId, { offsetMs, durationMs }),
 				),
 			);
 		},
 		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldCollectionAppendSegment = useCallback(
+		(collectionId: string, type: AnnotationRegion["type"] = "text") => {
+			pushState((prev) => {
+				const alignOffsetMs = selectedHoldSegmentKey?.startsWith(`${collectionId}:`)
+					? prev.holdCollections
+							?.find((entry) => entry.id === collectionId)
+							?.segments.find((segment) => segment.id === selectedHoldSegmentKey.split(":")[1])
+							?.offsetMs
+					: undefined;
+				return updateHoldCollectionById(prev, collectionId, (collection) =>
+					appendHoldCollectionSegment(collection, type, undefined, alignOffsetMs),
+				);
+			});
+		},
+		[pushState, updateHoldCollectionById, selectedHoldSegmentKey],
 	);
 
 	const handleHoldSegmentContentChange = useCallback(
@@ -2167,38 +2213,147 @@ export default function VideoEditor() {
 	);
 
 	const handleHoldSegmentTypeChange = useCallback(
-		(collectionId: string, segmentId: string, type: AnnotationRegion["type"]) => {
+		(collectionId: string, segmentId: string, kind: HoldCollectionSegmentKind) => {
 			pushState((prev) =>
 				updateHoldCollectionById(prev, collectionId, (collection) =>
-					updateHoldCollectionSegmentContent(collection, segmentId, (segmentContent) => {
-						if (type === "text") {
-							return {
-								...segmentContent,
-								type: "text",
-								content: segmentContent.textContent || "Enter text...",
-							};
-						}
-						if (type === "image") {
-							return {
-								...segmentContent,
-								type: "image",
-								content: segmentContent.imageContent || "",
-							};
-						}
-						if (type === "figure") {
-							return {
-								...segmentContent,
-								type: "figure",
-								content: "",
-								figureData: segmentContent.figureData ?? { ...getAnnotationFigureDataPreset() },
-							};
-						}
-						return { ...segmentContent, type };
-					}),
+					setHoldCollectionSegmentKind(collection, segmentId, kind),
 				),
 			);
 		},
 		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldSegmentAudioReplace = useCallback(
+		(
+			collectionId: string,
+			segmentId: string,
+			audioUrl: string,
+			fileName: string,
+			sourceDurationMs: number,
+			sourceFilePath?: string,
+		) => {
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) => {
+					let updated = setHoldCollectionSegmentKind(collection, segmentId, "audio");
+					updated = updateHoldCollectionSegmentAudio(updated, segmentId, {
+						audioUrl,
+						fileName,
+						sourceDurationMs,
+						sourceFilePath,
+					});
+					const segment = updated.segments.find((entry) => entry.id === segmentId);
+					if (segment && sourceDurationMs > 0) {
+						const nextDuration = Math.max(500, Math.min(sourceDurationMs, segment.durationMs));
+						if (nextDuration !== segment.durationMs) {
+							updated = setHoldCollectionSegmentTiming(updated, segmentId, {
+								offsetMs: segment.offsetMs,
+								durationMs: Math.max(segment.durationMs, nextDuration),
+							});
+						}
+					}
+					return updated;
+				}),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleHoldSegmentAudioVolumeChange = useCallback(
+		(collectionId: string, segmentId: string, volume: number) => {
+			pushState((prev) =>
+				updateHoldCollectionById(prev, collectionId, (collection) =>
+					updateHoldCollectionSegmentAudio(collection, segmentId, { volume }),
+				),
+			);
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
+	const handleAnnotationAudioModeChange = useCallback(
+		(annotationId: string) => {
+			pushState((prev) => {
+				const annotation = prev.annotationRegions.find((region) => region.id === annotationId);
+				if (!annotation) {
+					return prev;
+				}
+				const clipId = linkedAnnotationAudioClipId(annotationId);
+				if (prev.audioAnnotationClips.some((clip) => clip.id === clipId)) {
+					return prev;
+				}
+				return {
+					...prev,
+					audioAnnotationClips: [
+						...prev.audioAnnotationClips,
+						buildLinkedAnnotationAudioClip(
+							annotationId,
+							annotation.startMs,
+							annotation.endMs - annotation.startMs,
+						),
+					],
+				};
+			});
+		},
+		[pushState],
+	);
+
+	const handleLinkedAnnotationAudioReplace = useCallback(
+		(
+			annotationId: string,
+			audioUrl: string,
+			fileName: string,
+			sourceDurationMs: number,
+			sourceFilePath?: string,
+		) => {
+			pushState((prev) => {
+				const annotation = prev.annotationRegions.find((region) => region.id === annotationId);
+				if (!annotation) {
+					return prev;
+				}
+				const clipId = linkedAnnotationAudioClipId(annotationId);
+				const spanMs = annotation.endMs - annotation.startMs;
+				const durationMs = Math.max(
+					500,
+					Math.min(sourceDurationMs, spanMs, MAX_POSITION_ANNOTATION_DURATION_MS),
+				);
+				const existing = prev.audioAnnotationClips.find((clip) => clip.id === clipId);
+				const nextClip: import("./types").AudioAnnotationClip = existing
+					? {
+							...existing,
+							audioUrl,
+							fileName,
+							sourceDurationMs,
+							durationMs: Math.max(existing.durationMs, durationMs),
+							...(sourceFilePath ? { sourceFilePath } : {}),
+						}
+					: {
+							...buildLinkedAnnotationAudioClip(annotationId, annotation.startMs, durationMs),
+							audioUrl,
+							fileName,
+							sourceDurationMs,
+							...(sourceFilePath ? { sourceFilePath } : {}),
+						};
+				return {
+					...prev,
+					audioAnnotationClips: existing
+						? prev.audioAnnotationClips.map((clip) => (clip.id === clipId ? nextClip : clip))
+						: [...prev.audioAnnotationClips, nextClip],
+				};
+			});
+		},
+		[pushState],
+	);
+
+	const handleLinkedAnnotationAudioVolumeChange = useCallback(
+		(annotationId: string, volume: number) => {
+			const clipId = linkedAnnotationAudioClipId(annotationId);
+			pushState((prev) => ({
+				...prev,
+				audioAnnotationClips: prev.audioAnnotationClips.map((clip) =>
+					clip.id === clipId ? { ...clip, volume } : clip,
+				),
+			}));
+		},
+		[pushState],
 	);
 
 	const handleHoldSegmentFigureDataChange = useCallback(
@@ -2250,13 +2405,36 @@ export default function VideoEditor() {
 		[pushState],
 	);
 
+	const handleHoldSegmentDuplicate = useCallback(
+		(collectionId: string, segmentId: string) => {
+			let newSegmentId: string | null = null;
+			pushState((prev) => {
+				const collection = (prev.holdCollections ?? []).find((entry) => entry.id === collectionId);
+				if (!collection) {
+					return prev;
+				}
+				const updated = duplicateHoldCollectionSegment(collection, segmentId);
+				const sourceIndex = collection.segments.findIndex((segment) => segment.id === segmentId);
+				newSegmentId = updated.segments[sourceIndex + 1]?.id ?? null;
+				return updateHoldCollectionById(prev, collectionId, () => updated);
+			});
+			if (newSegmentId) {
+				setSelectedHoldSegmentKey(`${collectionId}:${newSegmentId}`);
+				setSelectedAnnotationId(null);
+			}
+		},
+		[pushState, updateHoldCollectionById],
+	);
+
 	const handleAnnotationDelete = useCallback(
 		(id: string) => {
 			pushState((prev) =>
 				withSyncedHoldRegions(prev, {
 					annotationRegions: prev.annotationRegions.filter((r) => r.id !== id),
 					holdCollections: removeHoldCollectionsByShellId(prev.holdCollections ?? [], id),
-					audioAnnotationClips: prev.audioAnnotationClips.filter((clip) => clip.id !== id),
+					audioAnnotationClips: prev.audioAnnotationClips.filter(
+						(clip) => clip.id !== id && clip.id !== linkedAnnotationAudioClipId(id),
+					),
 				}),
 			);
 			if (selectedAnnotationId === id) {
@@ -2325,6 +2503,109 @@ export default function VideoEditor() {
 			}
 		},
 		[pushState, selectedAnnotationId, selectedBlurId],
+	);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset inspector tab when timeline selection changes
+	useEffect(() => {
+		setInspectorTabKind(null);
+	}, [selectedAnnotationId, selectedHoldSegmentKey]);
+
+	const inspectorHoldSegment = useMemo(() => {
+		if (selectedHoldSegmentKey) {
+			const splitAt = selectedHoldSegmentKey.indexOf(":");
+			if (splitAt <= 0) {
+				return undefined;
+			}
+			const collectionId = selectedHoldSegmentKey.slice(0, splitAt);
+			const segmentId = selectedHoldSegmentKey.slice(splitAt + 1);
+			const collection = holdCollections.find((entry) => entry.id === collectionId);
+			return collection?.segments.find((segment) => segment.id === segmentId);
+		}
+		if (selectedAnnotationId) {
+			const collection = findHoldCollectionByShellId(holdCollections, selectedAnnotationId);
+			return collection?.segments[0];
+		}
+		return undefined;
+	}, [selectedHoldSegmentKey, selectedAnnotationId, holdCollections]);
+
+	const inspectorAnnotationRegion = useMemo(() => {
+		if (!selectedAnnotationId || selectedHoldSegmentKey) {
+			return undefined;
+		}
+		if (findHoldCollectionByShellId(holdCollections, selectedAnnotationId)) {
+			return undefined;
+		}
+		return annotationOnlyRegions.find((region) => region.id === selectedAnnotationId);
+	}, [selectedAnnotationId, selectedHoldSegmentKey, holdCollections, annotationOnlyRegions]);
+
+	const inspectorLinkedAudioClip = useMemo(() => {
+		if (!selectedAnnotationId || inspectorHoldSegment) {
+			return undefined;
+		}
+		return audioAnnotationClips.find(
+			(clip) => clip.id === linkedAnnotationAudioClipId(selectedAnnotationId),
+		);
+	}, [selectedAnnotationId, inspectorHoldSegment, audioAnnotationClips]);
+
+	const defaultInspectorTabKind = useMemo(
+		() =>
+			deriveInspectorTabKind({
+				holdSegment: inspectorHoldSegment,
+				annotation: inspectorAnnotationRegion,
+				linkedAudioClip: inspectorLinkedAudioClip,
+			}),
+		[inspectorHoldSegment, inspectorAnnotationRegion, inspectorLinkedAudioClip],
+	);
+
+	const resolvedInspectorTabKind = inspectorTabKind ?? defaultInspectorTabKind;
+
+	const hasInspectorTabTarget = Boolean(
+		selectedHoldSegmentKey ||
+			(selectedAnnotationId &&
+				!selectedAudioAnnotationId &&
+				!selectedBlurId &&
+				(inspectorHoldSegment ||
+					inspectorAnnotationRegion ||
+					findHoldCollectionByShellId(holdCollections, selectedAnnotationId))),
+	);
+
+	const applyInspectorTabKind = useCallback(
+		(kind: AnnotationTabKind) => {
+			setInspectorTabKind(kind);
+			if (selectedHoldSegmentKey) {
+				const splitAt = selectedHoldSegmentKey.indexOf(":");
+				if (splitAt <= 0) {
+					return;
+				}
+				handleHoldSegmentTypeChange(
+					selectedHoldSegmentKey.slice(0, splitAt),
+					selectedHoldSegmentKey.slice(splitAt + 1),
+					kind,
+				);
+				return;
+			}
+			if (!selectedAnnotationId) {
+				return;
+			}
+			const collection = findHoldCollectionByShellId(holdCollections, selectedAnnotationId);
+			if (collection?.segments[0]) {
+				handleHoldSegmentTypeChange(collection.id, collection.segments[0].id, kind);
+				return;
+			}
+			if (kind === "audio") {
+				handleAnnotationAudioModeChange(selectedAnnotationId);
+				return;
+			}
+			handleAnnotationTypeChange(selectedAnnotationId, kind);
+		},
+		[
+			selectedHoldSegmentKey,
+			selectedAnnotationId,
+			holdCollections,
+			handleHoldSegmentTypeChange,
+			handleAnnotationAudioModeChange,
+			handleAnnotationTypeChange,
+		],
 	);
 
 	const handleAnnotationStyleChange = useCallback(
@@ -2555,8 +2836,20 @@ export default function VideoEditor() {
 			const isInput =
 				e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
 
-			if (e.key === "Tab" && !isInput) {
-				e.preventDefault();
+			if (hasInspectorTabTarget && !timelineReadOnly && !isInput && !mod && !e.altKey) {
+				if (e.key === "Tab") {
+					e.preventDefault();
+					e.stopPropagation();
+					applyInspectorTabKind(cycleAnnotationTabKind(resolvedInspectorTabKind, e.shiftKey));
+					return;
+				}
+				const tabKind = ANNOTATION_TAB_KIND_BY_KEY[key];
+				if (tabKind && !e.shiftKey) {
+					e.preventDefault();
+					e.stopPropagation();
+					applyInspectorTabKind(tabKind);
+					return;
+				}
 			}
 
 			if (matchesShortcut(e, shortcuts.playPause, isMac)) {
@@ -2574,7 +2867,16 @@ export default function VideoEditor() {
 
 		window.addEventListener("keydown", handleKeyDown, { capture: true });
 		return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-	}, [undo, redo, shortcuts, isMac]);
+	}, [
+		undo,
+		redo,
+		shortcuts,
+		isMac,
+		timelineReadOnly,
+		hasInspectorTabTarget,
+		resolvedInspectorTabKind,
+		applyInspectorTabKind,
+	]);
 
 	useEffect(() => {
 		if (selectedZoomId && !zoomRegions.some((region) => region.id === selectedZoomId)) {
@@ -2591,14 +2893,15 @@ export default function VideoEditor() {
 	useEffect(() => {
 		if (
 			selectedAnnotationId &&
-			!annotationOnlyRegions.some((region) => region.id === selectedAnnotationId)
+			!annotationOnlyRegions.some((region) => region.id === selectedAnnotationId) &&
+			!findHoldCollectionByShellId(holdCollections, selectedAnnotationId)
 		) {
 			setSelectedAnnotationId(null);
 		}
 		if (selectedBlurId && !blurRegions.some((region) => region.id === selectedBlurId)) {
 			setSelectedBlurId(null);
 		}
-	}, [selectedAnnotationId, selectedBlurId, annotationOnlyRegions, blurRegions]);
+	}, [selectedAnnotationId, selectedBlurId, annotationOnlyRegions, blurRegions, holdCollections]);
 
 	useEffect(() => {
 		if (selectedSpeedId && !speedRegions.some((region) => region.id === selectedSpeedId)) {
@@ -3694,12 +3997,20 @@ export default function VideoEditor() {
 										onHoldSegmentDurationChange={handleHoldSegmentDurationChange}
 										onHoldSegmentContentChange={handleHoldSegmentContentChange}
 										onHoldSegmentTypeChange={handleHoldSegmentTypeChange}
+										onHoldSegmentAudioReplace={handleHoldSegmentAudioReplace}
+										onHoldSegmentAudioVolumeChange={handleHoldSegmentAudioVolumeChange}
 										onHoldSegmentStyleChange={handleHoldSegmentStyleChange}
 										onHoldSegmentFigureDataChange={handleHoldSegmentFigureDataChange}
 										onHoldSegmentDelete={handleHoldSegmentDelete}
+										onHoldSegmentDuplicate={handleHoldSegmentDuplicate}
 										holdRegions={holdRegions}
 										onAnnotationContentChange={handleAnnotationContentChange}
 										onAnnotationTypeChange={handleAnnotationTypeChange}
+										onAnnotationAudioModeChange={handleAnnotationAudioModeChange}
+										onLinkedAnnotationAudioReplace={handleLinkedAnnotationAudioReplace}
+										onLinkedAnnotationAudioVolumeChange={handleLinkedAnnotationAudioVolumeChange}
+										inspectorTabKind={resolvedInspectorTabKind}
+										onInspectorTabKindChange={applyInspectorTabKind}
 										onAnnotationStyleChange={handleAnnotationStyleChange}
 										onAnnotationFigureDataChange={handleAnnotationFigureDataChange}
 										onAnnotationDuplicate={handleAnnotationDuplicate}
@@ -3775,6 +4086,7 @@ export default function VideoEditor() {
 									selectedHoldSegmentKey={selectedHoldSegmentKey}
 									onSelectHoldSegment={handleSelectHoldSegment}
 									onHoldSegmentDurationChange={handleHoldSegmentDurationChange}
+									onHoldSegmentSpanChange={handleHoldSegmentSpanChange}
 									onHoldSegmentPairDurationChange={handleHoldSegmentPairDurationChange}
 									onHoldSegmentDelete={handleHoldSegmentDelete}
 									onHoldCollectionTotalDurationChange={handleHoldCollectionTotalDurationChange}

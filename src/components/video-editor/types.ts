@@ -320,8 +320,8 @@ export interface HoldRegion {
 	linkedCollectionId?: string;
 }
 
-/** Default duration for the first segment when creating a new hold collection. */
-export const DEFAULT_HOLD_COLLECTION_FIRST_SEGMENT_MS = 10_000;
+/** Default shell duration when creating a new hold collection. */
+export const DEFAULT_HOLD_COLLECTION_FIRST_SEGMENT_MS = 6_000;
 
 /** Default duration when appending a segment to an existing hold collection. */
 export const DEFAULT_HOLD_COLLECTION_APPEND_SEGMENT_MS = 3000;
@@ -332,16 +332,30 @@ export type HoldCollectionSegmentContent = Omit<
 	"id" | "startMs" | "endMs" | "freezeDuringAnnotation" | "holdDurationMs"
 >;
 
-export interface HoldCollectionSegment {
-	id: string;
-	durationMs: number;
-	content: HoldCollectionSegmentContent;
+export interface HoldCollectionSegmentAudio {
+	audioUrl: string;
+	sourceFilePath?: string;
+	fileName?: string;
+	sourceDurationMs?: number;
+	volume?: number;
 }
 
-/** Serial freeze steps at one source anchor; insert duration = sum(segment.durationMs). */
+export interface HoldCollectionSegment {
+	id: string;
+	/** Offset from collection insert start (ms). */
+	offsetMs: number;
+	durationMs: number;
+	content: HoldCollectionSegmentContent;
+	/** When set, this segment plays imported audio during the hold (no canvas overlay). */
+	audio?: HoldCollectionSegmentAudio;
+}
+
+/** Freeze steps at one source anchor; insert duration = effectiveDurationMs (see holdCollection.ts). */
 export interface HoldCollection {
 	id: string;
 	sourceMs: number;
+	/** Shell baseline length; may grow when segments extend past it. */
+	shellDurationMs: number;
 	segments: HoldCollectionSegment[];
 	/** Shell row on the hold track; typically the first segment's linked annotation id. */
 	shellAnnotationId?: string;

@@ -169,3 +169,13 @@
 .glassHold.selected .zoomEndCap {
 	opacity: 1;
 }
+
+.glassHold.selected {
+	background: rgba(56, 189, 248, 0.28);
+	border: 2.5px solid #38bdf8;
+	box-shadow:
+		0 0 0 1px rgba(56, 189, 248, 0.95),
+		0 0 0 5px rgba(56, 189, 248, 0.18),
+		0 12px 26px rgba(0, 0, 0, 0.28);
+	z-index: 10;
+}

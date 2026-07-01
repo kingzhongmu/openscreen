@@ -40,6 +40,11 @@ import {
 	resolveNativeCursorRenderAsset,
 } from "@/lib/cursor/nativeCursor";
 import {
+	collectHoldCollectionSegmentAudioClips,
+	parseHoldSegmentIdFromAudioClipId,
+	resolveHoldSegmentAudioClipPlayback,
+} from "@/lib/holdCollection";
+import {
 	buildHoldCollectionOverlayAnnotations,
 	buildHoldCollectionSourceOverlayAnnotations,
 } from "@/lib/holdCollectionTimeline";
@@ -328,6 +333,14 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const [overlaySize, setOverlaySize] = useState({ width: 800, height: 600 });
 		const [overlayElement, setOverlayElement] = useState<HTMLDivElement | null>(null);
 		const overlayRef = useRef<HTMLDivElement | null>(null);
+
+		const previewAudioClips = useMemo(
+			() => [
+				...audioAnnotationClips.filter((clip) => clip.audioUrl?.trim()),
+				...collectHoldCollectionSegmentAudioClips(holdCollections),
+			],
+			[audioAnnotationClips, holdCollections],
+		);
 
 		const focusIndicatorRef = useRef<HTMLDivElement | null>(null);
 		const composite3DRef = useRef<HTMLDivElement | null>(null);
@@ -878,31 +891,49 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 						supplementalAudio.currentTime = video.currentTime;
 					}
 				} else {
-					if (Math.abs(supplementalAudio.currentTime - video.currentTime) > 0.15) {
-						supplementalAudio.currentTime = video.currentTime;
+					const targetTime = video.currentTime;
+					if (Math.abs(supplementalAudio.currentTime - targetTime) > 0.05) {
+						supplementalAudio.pause();
+						supplementalAudio.currentTime = targetTime;
 					}
-					supplementalAudio.play().catch(() => {
-						// Keep video playback running even if supplemental preview audio is unavailable.
-					});
+					if (supplementalAudio.paused) {
+						supplementalAudio.play().catch(() => {
+							// Keep video playback running even if supplemental preview audio is unavailable.
+						});
+					}
 				}
 			}
 
-			for (const clip of audioAnnotationClips) {
+			for (const clip of previewAudioClips) {
 				const element = clipAudioRefs.current.get(clip.id);
 				if (!element) {
 					continue;
 				}
 
-				const anchorMs = useOutputClock
-					? resolveAudioAnnotationOutputAnchorMs(clip.anchorMs, holds)
-					: clip.anchorMs;
-				const timeMs = useOutputClock ? outputMs : sourceTimeMs;
-				const inRange = timeMs >= anchorMs && timeMs < anchorMs + clip.durationMs;
-				const offsetSec = (timeMs - anchorMs) / 1000;
+				const isHoldSegmentClip = parseHoldSegmentIdFromAudioClipId(clip.id) !== null;
+				const useClipOutputClock = holds.length > 0 && playbackModeRef.current === "preview";
+				const playbackAxis = useClipOutputClock ? "preview" : "source";
+				const { anchorMs, durationMs } = resolveHoldSegmentAudioClipPlayback(
+					clip,
+					holdCollections,
+					holds,
+					playbackAxis,
+				);
+				const resolvedAnchorMs =
+					useClipOutputClock && !isHoldSegmentClip
+						? resolveAudioAnnotationOutputAnchorMs(clip.anchorMs, holds)
+						: anchorMs;
+				const timeMs = useClipOutputClock ? outputMs : sourceTimeMs;
+				const inRange = timeMs >= resolvedAnchorMs && timeMs < resolvedAnchorMs + durationMs;
+				const offsetSec = Math.max(0, (timeMs - resolvedAnchorMs) / 1000);
+				const clipDurationSec = durationMs / 1000;
 
-				if (!inRange) {
+				if (!inRange || offsetSec >= clipDurationSec) {
 					if (!element.paused) {
 						element.pause();
+					}
+					if (element.currentTime > 0) {
+						element.currentTime = 0;
 					}
 					continue;
 				}
@@ -916,13 +947,16 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				}
 
 				if (Math.abs(element.currentTime - offsetSec) > 0.15) {
+					element.pause();
 					element.currentTime = offsetSec;
 				}
-				element.play().catch(() => {
-					// Ignore preview audio failures.
-				});
+				if (element.paused) {
+					element.play().catch(() => {
+						// Ignore preview audio failures.
+					});
+				}
 			}
-		}, [audioAnnotationClips, supplementalAudioPath]);
+		}, [previewAudioClips, supplementalAudioPath, holdCollections]);
 
 		useEffect(() => {
 			syncPreviewAudioRef.current = syncPreviewAudio;
@@ -931,7 +965,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		// biome-ignore lint/correctness/useExhaustiveDependencies: re-sync preview audio when play state changes
 		useEffect(() => {
 			syncPreviewAudio();
-		}, [syncPreviewAudio, isPlaying]);
+		}, [syncPreviewAudio, isPlaying, holdCollections]);
 
 		useEffect(() => {
 			motionBlurAmountRef.current = motionBlurAmount;
@@ -1270,7 +1304,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 		useEffect(() => {
 			const map = clipAudioRefs.current;
-			const activeIds = new Set(audioAnnotationClips.map((clip) => clip.id));
+			const activeIds = new Set(previewAudioClips.map((clip) => clip.id));
 
 			for (const [id, element] of map) {
 				if (!activeIds.has(id)) {
@@ -1280,7 +1314,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				}
 			}
 
-			for (const clip of audioAnnotationClips) {
+			for (const clip of previewAudioClips) {
 				let element = map.get(clip.id);
 				if (!element) {
 					element = document.createElement("audio");
@@ -1292,7 +1326,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				}
 				element.volume = clip.volume ?? 1;
 			}
-		}, [audioAnnotationClips]);
+		}, [previewAudioClips]);
 
 		useEffect(() => {
 			if (!pixiReady || !videoReady) return;
@@ -2281,67 +2315,76 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 									}
 								};
 
-								return sorted.map((item) => (
-									<AnnotationOverlay
-										key={
-											item.kind === "blur"
-												? `${item.region.id}-${overlaySize.width}-${overlaySize.height}-${item.region.blurData?.type ?? "blur"}-${item.region.blurData?.shape ?? "rectangle"}-${item.region.blurData?.color ?? "white"}-${Math.round(item.region.blurData?.blockSize ?? 0)}-${Math.round(item.region.blurData?.intensity ?? 0)}-${(item.region.blurData?.freehandPoints ?? []).map((p) => `${Math.round(p.x)}_${Math.round(p.y)}`).join("-")}`
-												: `${item.region.id}-${overlaySize.width}-${overlaySize.height}`
-										}
-										annotation={item.region}
-										isSelected={
-											item.kind === "blur"
-												? item.region.id === selectedBlurId
-												: selectedSegmentId
-													? item.region.id === selectedSegmentId
-													: item.region.id === selectedAnnotationId
-										}
-										containerWidth={overlaySize.width}
-										containerHeight={overlaySize.height}
-										onPositionChange={(id, position) =>
-											item.kind === "blur"
-												? onBlurPositionChange?.(id, position)
-												: onAnnotationPositionChange?.(id, position)
-										}
-										onSizeChange={(id, size) =>
-											item.kind === "blur"
-												? onBlurSizeChange?.(id, size)
-												: onAnnotationSizeChange?.(id, size)
-										}
-										onImageScaleModeChange={
-											item.kind === "annotation"
-												? (id, mode) => onAnnotationImageScaleModeChange?.(id, mode)
-												: undefined
-										}
-										onBlurDataChange={
-											item.kind === "blur"
-												? (id, blurData) => onBlurDataChange?.(id, blurData)
-												: undefined
-										}
-										onBlurDataCommit={item.kind === "blur" ? onBlurDataCommit : undefined}
-										onClick={item.kind === "blur" ? handleBlurClick : handleAnnotationClick}
-										zIndex={item.region.zIndex}
-										isSelectedBoost={
-											item.kind === "blur"
-												? item.region.id === selectedBlurId
-												: selectedSegmentId
-													? item.region.id === selectedSegmentId
-													: item.region.id === selectedAnnotationId
-										}
-										previewSourceCanvas={previewSnapshotCanvas}
-										previewFrameVersion={useOutputVisibility ? outputMs : sourceMs}
-										currentTimeMs={
-											useOutputVisibility
-												? resolveAnnotationAnimationTimeMs(
-														outputMs,
-														item.region.startMs,
-														holdRegions,
-													)
-												: sourceMs
-										}
-										interactionDisabled={!overlayInteractionsEnabled}
-									/>
-								));
+								return sorted.map((item) => {
+									const isHoldSegmentOverlay =
+										item.kind === "annotation" &&
+										holdCollections.some((collection) =>
+											collection.segments.some((segment) => segment.id === item.region.id),
+										);
+
+									return (
+										<AnnotationOverlay
+											key={
+												item.kind === "blur"
+													? `${item.region.id}-${overlaySize.width}-${overlaySize.height}-${item.region.blurData?.type ?? "blur"}-${item.region.blurData?.shape ?? "rectangle"}-${item.region.blurData?.color ?? "white"}-${Math.round(item.region.blurData?.blockSize ?? 0)}-${Math.round(item.region.blurData?.intensity ?? 0)}-${(item.region.blurData?.freehandPoints ?? []).map((p) => `${Math.round(p.x)}_${Math.round(p.y)}`).join("-")}`
+													: `${item.region.id}-${overlaySize.width}-${overlaySize.height}`
+											}
+											annotation={item.region}
+											isSelected={
+												item.kind === "blur"
+													? item.region.id === selectedBlurId
+													: selectedSegmentId
+														? item.region.id === selectedSegmentId
+														: item.region.id === selectedAnnotationId
+											}
+											selectionAccent={isHoldSegmentOverlay ? "hold" : "default"}
+											containerWidth={overlaySize.width}
+											containerHeight={overlaySize.height}
+											onPositionChange={(id, position) =>
+												item.kind === "blur"
+													? onBlurPositionChange?.(id, position)
+													: onAnnotationPositionChange?.(id, position)
+											}
+											onSizeChange={(id, size) =>
+												item.kind === "blur"
+													? onBlurSizeChange?.(id, size)
+													: onAnnotationSizeChange?.(id, size)
+											}
+											onImageScaleModeChange={
+												item.kind === "annotation"
+													? (id, mode) => onAnnotationImageScaleModeChange?.(id, mode)
+													: undefined
+											}
+											onBlurDataChange={
+												item.kind === "blur"
+													? (id, blurData) => onBlurDataChange?.(id, blurData)
+													: undefined
+											}
+											onBlurDataCommit={item.kind === "blur" ? onBlurDataCommit : undefined}
+											onClick={item.kind === "blur" ? handleBlurClick : handleAnnotationClick}
+											zIndex={item.region.zIndex}
+											isSelectedBoost={
+												item.kind === "blur"
+													? item.region.id === selectedBlurId
+													: selectedSegmentId
+														? item.region.id === selectedSegmentId
+														: item.region.id === selectedAnnotationId
+											}
+											previewSourceCanvas={previewSnapshotCanvas}
+											previewFrameVersion={useOutputVisibility ? outputMs : sourceMs}
+											currentTimeMs={
+												useOutputVisibility
+													? resolveAnnotationAnimationTimeMs(
+															outputMs,
+															item.region.startMs,
+															holdRegions,
+														)
+													: sourceMs
+											}
+											interactionDisabled={!overlayInteractionsEnabled}
+										/>
+									);
+								});
 							})()}
 						</div>
 					)}

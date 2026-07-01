@@ -8,11 +8,13 @@ import {
 	Copy,
 	Image as ImageIcon,
 	Italic,
+	Mic,
 	Pause,
 	Trash2,
 	Type,
 	Underline,
 	Upload,
+	Volume2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -34,8 +36,14 @@ import {
 	restoreAnnotationFigureDataDefaults,
 	restoreAnnotationTextStyleDefaults,
 } from "@/lib/annotationPreferences";
+import type { AnnotationTabKind } from "@/lib/annotationTabKind";
 import { normalizeTextAnimation, TEXT_ANIMATION_OPTIONS } from "@/lib/annotationTextAnimation";
 import { ARROW_ANIMATION_OPTIONS, normalizeArrowAnimation } from "@/lib/arrowAnimation";
+import {
+	ACCEPTED_AUDIO_ANNOTATION_EXTENSIONS,
+	isAcceptedAudioAnnotationFile,
+} from "@/lib/audioAnnotation";
+import { resolveImportedAudioReference } from "@/lib/audioAnnotationPersistence";
 import { type CustomFont, getCustomFonts } from "@/lib/customFonts";
 import { collectionHoldDurationMs } from "@/lib/holdCollection";
 import { cn } from "@/lib/utils";
@@ -61,22 +69,45 @@ import {
 	DEFAULT_FIGURE_DATA,
 	type FigureData,
 	type HoldCollection,
+	type HoldCollectionSegmentAudio,
 } from "./types";
+
+export type HoldCollectionSegmentKind = AnnotationType | "audio";
 
 interface AnnotationSettingsPanelProps {
 	annotation: AnnotationRegion;
 	holdCollection?: HoldCollection;
 	holdCollectionSegmentIndex?: number;
+	highlightHoldSegmentId?: string;
 	segmentOffsetStartMs?: number;
 	outputSpan?: { start: number; end: number };
 	videoDurationMs?: number;
 	contentReadOnly?: boolean;
 	onContentChange?: (content: string) => void;
-	onTypeChange?: (type: AnnotationType) => void;
+	onTypeChange?: (kind: HoldCollectionSegmentKind) => void;
+	activeTabKind?: AnnotationTabKind;
+	onTabKindChange?: (kind: AnnotationTabKind) => void;
 	onStyleChange?: (style: Partial<AnnotationRegion["style"]>) => void;
 	onDurationChange?: (durationMs: number) => void;
 	onFreezeDuringAnnotationChange?: (enabled: boolean) => void;
 	onFigureDataChange?: (figureData: FigureData) => void;
+	holdSegmentAudio?: HoldCollectionSegmentAudio;
+	linkedAnnotationAudio?: HoldCollectionSegmentAudio;
+	linkedAnnotationAudioActive?: boolean;
+	onHoldSegmentAudioReplace?: (
+		audioUrl: string,
+		fileName: string,
+		sourceDurationMs: number,
+		sourceFilePath?: string,
+	) => void;
+	onHoldSegmentAudioVolumeChange?: (volume: number) => void;
+	onLinkedAnnotationAudioReplace?: (
+		audioUrl: string,
+		fileName: string,
+		sourceDurationMs: number,
+		sourceFilePath?: string,
+	) => void;
+	onLinkedAnnotationAudioVolumeChange?: (volume: number) => void;
 	onDuplicate?: () => void;
 	onAppendHoldSegment?: () => void;
 	onSelectHoldSegment?: (segmentId: string) => void;
@@ -120,16 +151,26 @@ export function AnnotationSettingsPanel({
 	annotation,
 	holdCollection,
 	holdCollectionSegmentIndex,
+	highlightHoldSegmentId,
 	segmentOffsetStartMs,
 	outputSpan,
 	videoDurationMs,
 	contentReadOnly = false,
 	onContentChange,
 	onTypeChange,
+	activeTabKind,
+	onTabKindChange,
 	onStyleChange,
 	onDurationChange,
 	onFreezeDuringAnnotationChange,
 	onFigureDataChange,
+	holdSegmentAudio,
+	linkedAnnotationAudio,
+	linkedAnnotationAudioActive = false,
+	onHoldSegmentAudioReplace,
+	onHoldSegmentAudioVolumeChange,
+	onLinkedAnnotationAudioReplace,
+	onLinkedAnnotationAudioVolumeChange,
 	onDuplicate,
 	onAppendHoldSegment,
 	onSelectHoldSegment,
@@ -138,6 +179,7 @@ export function AnnotationSettingsPanel({
 }: AnnotationSettingsPanelProps) {
 	const t = useScopedT("settings");
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const audioFileInputRef = useRef<HTMLInputElement>(null);
 	const [customFonts, setCustomFonts] = useState<CustomFont[]>([]);
 	const fontStyleLabels: Record<string, string> = {
 		classic: t("fontStyles.classic"),
@@ -218,9 +260,48 @@ export function AnnotationSettingsPanel({
 				? collectionHoldDurationMs(holdCollection)
 				: Math.max(1, annotation.endMs - annotation.startMs);
 	const isMultiSegmentHold = (holdCollection?.segments.length ?? 0) > 1;
+	const showAudioTab = true;
+	const annotationAudio = holdSegmentAudio ?? linkedAnnotationAudio;
+	const onAudioReplace = onHoldSegmentAudioReplace ?? onLinkedAnnotationAudioReplace;
+	const onAudioVolumeChange = onHoldSegmentAudioVolumeChange ?? onLinkedAnnotationAudioVolumeChange;
+	const resolvedTabKind: AnnotationTabKind =
+		activeTabKind ?? (annotation.type === "blur" ? "text" : (annotation.type as AnnotationTabKind));
+
+	const handleTabKindChange = (kind: AnnotationTabKind) => {
+		if (onTabKindChange) {
+			onTabKindChange(kind);
+			return;
+		}
+		onTypeChange?.(kind);
+	};
+
+	const handleAnnotationAudioUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+		const file = event.target.files?.[0];
+		event.target.value = "";
+		if (!file || !onAudioReplace) {
+			return;
+		}
+		if (!isAcceptedAudioAnnotationFile(file)) {
+			toast.error(t("audioAnnotation.invalidFileType"));
+			return;
+		}
+		try {
+			const { audioUrl, sourceFilePath } = resolveImportedAudioReference(file);
+			const { getAudioFileDurationMs } = await import("@/lib/audioAnnotation");
+			const sourceDurationMs = await getAudioFileDurationMs(audioUrl);
+			onAudioReplace(audioUrl, file.name, sourceDurationMs, sourceFilePath);
+			toast.success(t("audioAnnotation.importSuccess"));
+		} catch {
+			toast.error(t("audioAnnotation.failedToLoad"));
+		}
+	};
 	const maxDurationMs = videoDurationMs
 		? Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, videoDurationMs - annotation.startMs)
 		: MAX_POSITION_ANNOTATION_DURATION_MS;
+
+	const canEditAnnotationTabs =
+		!contentReadOnly &&
+		Boolean(onContentChange && onStyleChange && (onTypeChange || onTabKindChange));
 
 	return (
 		<div className="min-w-0 p-4 flex flex-col h-full overflow-y-auto custom-scrollbar">
@@ -270,7 +351,12 @@ export function AnnotationSettingsPanel({
 										key={segment.id}
 										type="button"
 										onClick={() => onSelectHoldSegment(segment.id)}
-										className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[10px] text-slate-300 hover:border-[#B4A046]/40 hover:text-[#B4A046]"
+										className={cn(
+											"rounded-md px-2 py-1 text-[10px] transition-colors",
+											highlightHoldSegmentId === segment.id
+												? "border-2 border-sky-400 bg-sky-400/15 font-semibold text-sky-100 shadow-[0_0_0_2px_rgba(56,189,248,0.15)]"
+												: "border border-white/10 bg-black/30 text-slate-300 hover:border-sky-400/40 hover:text-sky-200",
+										)}
 									>
 										{t("annotation.holdCollectionStepButton", { index: String(index + 1) })}
 									</button>
@@ -350,14 +436,19 @@ export function AnnotationSettingsPanel({
 					</div>
 				)}
 
-				{!contentReadOnly && onContentChange && onTypeChange && onStyleChange && (
+				{canEditAnnotationTabs && (
 					<>
 						<Tabs
-							value={annotation.type}
-							onValueChange={(value) => onTypeChange(value as AnnotationType)}
+							value={resolvedTabKind}
+							onValueChange={(value) => handleTabKindChange(value as AnnotationTabKind)}
 							className="mb-4"
 						>
-							<TabsList className="mb-4 bg-white/[0.035] border border-white/[0.06] p-0.5 w-full grid grid-cols-3 h-9 rounded-xl">
+							<TabsList
+								className={cn(
+									"mb-4 bg-white/[0.035] border border-white/[0.06] p-0.5 w-full h-9 rounded-xl",
+									showAudioTab ? "grid grid-cols-4" : "grid grid-cols-3",
+								)}
+							>
 								<TabsTrigger
 									value="text"
 									className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-slate-400 rounded-lg transition-all gap-1.5 text-[11px]"
@@ -391,6 +482,15 @@ export function AnnotationSettingsPanel({
 									</svg>
 									{t("annotation.typeArrow")}
 								</TabsTrigger>
+								{showAudioTab && (
+									<TabsTrigger
+										value="audio"
+										className="data-[state=active]:bg-[#34B27B] data-[state=active]:text-white text-slate-400 rounded-lg transition-all gap-1.5 text-[11px]"
+									>
+										<Mic className="w-4 h-4" />
+										{t("annotation.typeAudio")}
+									</TabsTrigger>
+								)}
 							</TabsList>
 
 							{/* Text Content */}
@@ -927,6 +1027,64 @@ export function AnnotationSettingsPanel({
 									);
 								})()}
 							</TabsContent>
+
+							{showAudioTab && (
+								<TabsContent value="audio" className="mt-0 space-y-4">
+									<input
+										ref={audioFileInputRef}
+										type="file"
+										accept={ACCEPTED_AUDIO_ANNOTATION_EXTENSIONS.join(",")}
+										className="hidden"
+										onChange={handleAnnotationAudioUpload}
+									/>
+									<div className="space-y-2">
+										<div className="text-xs font-medium text-slate-200">
+											{t("audioAnnotation.fileName")}
+										</div>
+										<div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300 truncate">
+											{annotationAudio?.fileName || t("audioAnnotation.untitled")}
+										</div>
+									</div>
+									{onAudioReplace && (
+										<Button
+											type="button"
+											variant="outline"
+											className="w-full gap-2 bg-white/5 text-slate-200 border-white/10 hover:bg-[#34B27B] hover:text-white hover:border-[#34B27B]"
+											onClick={() => audioFileInputRef.current?.click()}
+										>
+											<Upload className="w-4 h-4" />
+											{annotationAudio?.audioUrl
+												? t("audioAnnotation.replaceFile")
+												: t("audioAnnotation.importAudio")}
+										</Button>
+									)}
+									{onAudioVolumeChange && annotationAudio?.audioUrl && (
+										<div className="space-y-2">
+											<div className="flex items-center justify-between text-xs font-medium text-slate-200">
+												<span className="flex items-center gap-1.5">
+													<Volume2 className="w-3.5 h-3.5" />
+													{t("audioAnnotation.volume")}
+												</span>
+												<span className="tabular-nums text-slate-400">
+													{Math.round((annotationAudio.volume ?? 1) * 100)}%
+												</span>
+											</div>
+											<Slider
+												value={[Math.round((annotationAudio.volume ?? 1) * 100)]}
+												min={0}
+												max={100}
+												step={1}
+												onValueChange={([value]) => onAudioVolumeChange(value / 100)}
+											/>
+										</div>
+									)}
+									<p className="text-xs text-slate-500 leading-relaxed">
+										{holdCollection
+											? t("annotation.holdSegmentAudioHint")
+											: t("annotation.overlayAudioHint")}
+									</p>
+								</TabsContent>
+							)}
 						</Tabs>
 
 						<div className="mt-4 grid grid-cols-2 gap-2">

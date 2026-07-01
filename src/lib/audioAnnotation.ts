@@ -2,8 +2,69 @@ import {
 	MAX_POSITION_ANNOTATION_DURATION_MS,
 	MIN_POSITION_ANNOTATION_DURATION_MS,
 } from "@/components/video-editor/positionAnnotation";
-import type { AudioAnnotationClip } from "@/components/video-editor/types";
+import type {
+	AudioAnnotationClip,
+	HoldCollectionSegmentAudio,
+} from "@/components/video-editor/types";
 import { DEFAULT_AUDIO_ANNOTATION_VOLUME } from "@/components/video-editor/types";
+
+export const LINKED_ANNOTATION_AUDIO_PREFIX = "linked-audio:";
+
+export function linkedAnnotationAudioClipId(annotationId: string): string {
+	return `${LINKED_ANNOTATION_AUDIO_PREFIX}${annotationId}`;
+}
+
+export function isLinkedAnnotationAudioClipId(clipId: string): boolean {
+	return clipId.startsWith(LINKED_ANNOTATION_AUDIO_PREFIX);
+}
+
+export function linkedAnnotationAudioFromClip(
+	clip: AudioAnnotationClip | undefined,
+): HoldCollectionSegmentAudio | undefined {
+	if (!clip) {
+		return undefined;
+	}
+	return {
+		audioUrl: clip.audioUrl ?? "",
+		sourceFilePath: clip.sourceFilePath,
+		fileName: clip.fileName,
+		sourceDurationMs: clip.sourceDurationMs,
+		volume: clip.volume ?? DEFAULT_AUDIO_ANNOTATION_VOLUME,
+	};
+}
+
+export function buildLinkedAnnotationAudioClip(
+	annotationId: string,
+	anchorMs: number,
+	durationMs: number,
+): AudioAnnotationClip {
+	return {
+		id: linkedAnnotationAudioClipId(annotationId),
+		anchorMs: Math.max(0, Math.round(anchorMs)),
+		durationMs: Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, Math.round(durationMs)),
+		source: "import",
+		audioUrl: "",
+		volume: DEFAULT_AUDIO_ANNOTATION_VOLUME,
+	};
+}
+
+export function syncLinkedAnnotationAudioClipSpan(
+	clips: AudioAnnotationClip[],
+	annotationId: string,
+	anchorMs: number,
+	durationMs: number,
+): AudioAnnotationClip[] {
+	const clipId = linkedAnnotationAudioClipId(annotationId);
+	if (!clips.some((clip) => clip.id === clipId)) {
+		return clips;
+	}
+	const nextDurationMs = Math.max(MIN_POSITION_ANNOTATION_DURATION_MS, Math.round(durationMs));
+	return clips.map((clip) =>
+		clip.id === clipId
+			? { ...clip, anchorMs: Math.max(0, Math.round(anchorMs)), durationMs: nextDurationMs }
+			: clip,
+	);
+}
 
 export const ACCEPTED_AUDIO_ANNOTATION_TYPES = [
 	"audio/mpeg",

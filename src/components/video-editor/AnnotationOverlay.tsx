@@ -43,6 +43,7 @@ function buildBlurFreehandPath(points: Array<{ x: number; y: number }>, closed =
 interface AnnotationOverlayProps {
 	annotation: AnnotationRegion;
 	isSelected: boolean;
+	selectionAccent?: "default" | "hold";
 	containerWidth: number;
 	containerHeight: number;
 	onPositionChange: (id: string, position: { x: number; y: number }) => void;
@@ -62,6 +63,7 @@ interface AnnotationOverlayProps {
 export function AnnotationOverlay({
 	annotation,
 	isSelected,
+	selectionAccent = "default",
 	containerWidth,
 	containerHeight,
 	onPositionChange,
@@ -83,6 +85,20 @@ export function AnnotationOverlay({
 	const committedHeight = (annotation.size.height / 100) * containerHeight;
 	const blurShape = annotation.type === "blur" ? (annotation.blurData?.shape ?? "rectangle") : null;
 	const isSelectedFreehandBlur = isSelected && blurShape === "freehand";
+	const isHoldSelection = isSelected && selectionAccent === "hold";
+	const selectionRingClass = isHoldSelection
+		? "ring-[3px] ring-sky-400 ring-offset-2 ring-offset-transparent"
+		: "ring-2 ring-[#34B27B] ring-offset-2 ring-offset-transparent";
+	const selectionBorder = isHoldSelection
+		? "3px solid rgba(56, 189, 248, 0.95)"
+		: "2px solid rgba(52, 178, 123, 0.8)";
+	const selectionBackground = isHoldSelection
+		? "rgba(56, 189, 248, 0.12)"
+		: "rgba(52, 178, 123, 0.1)";
+	const selectionShadow = isHoldSelection
+		? "0 0 0 2px rgba(56, 189, 248, 0.45)"
+		: "0 0 0 1px rgba(52, 178, 123, 0.35)";
+	const handleBorder = isHoldSelection ? "2px solid #38bdf8" : "2px solid #34B27B";
 	const isDraggingRef = useRef(false);
 	const isDrawingFreehandRef = useRef(false);
 	const [isImageResizing, setIsImageResizing] = useState(false);
@@ -615,28 +631,21 @@ export function AnnotationOverlay({
 				onClick(annotation.id);
 			}}
 			bounds="parent"
-			className={cn(
-				"cursor-move",
-				isSelected &&
-					annotation.type !== "blur" &&
-					"ring-2 ring-[#34B27B] ring-offset-2 ring-offset-transparent",
-			)}
+			className={cn("cursor-move", isSelected && annotation.type !== "blur" && selectionRingClass)}
 			style={{
 				zIndex: isSelectedBoost ? zIndex + 1000 : zIndex, // keep the selected annotation on top
 				pointerEvents: isSelected ? "auto" : "none",
-				border:
-					isSelected && annotation.type !== "blur" ? "2px solid rgba(52, 178, 123, 0.8)" : "none",
+				border: isSelected && annotation.type !== "blur" ? selectionBorder : "none",
 				backgroundColor:
-					isSelected && annotation.type !== "blur" ? "rgba(52, 178, 123, 0.1)" : "transparent",
-				boxShadow:
-					isSelected && annotation.type !== "blur" ? "0 0 0 1px rgba(52, 178, 123, 0.35)" : "none",
+					isSelected && annotation.type !== "blur" ? selectionBackground : "transparent",
+				boxShadow: isSelected && annotation.type !== "blur" ? selectionShadow : "none",
 			}}
 			resizeHandleStyles={{
 				topLeft: {
 					width: "12px",
 					height: "12px",
 					backgroundColor: isSelected ? "white" : "transparent",
-					border: isSelected ? "2px solid #34B27B" : "none",
+					border: isSelected ? handleBorder : "none",
 					borderRadius: "50%",
 					left: "-6px",
 					top: "-6px",
@@ -646,7 +655,7 @@ export function AnnotationOverlay({
 					width: "12px",
 					height: "12px",
 					backgroundColor: isSelected ? "white" : "transparent",
-					border: isSelected ? "2px solid #34B27B" : "none",
+					border: isSelected ? handleBorder : "none",
 					borderRadius: "50%",
 					right: "-6px",
 					top: "-6px",
@@ -656,7 +665,7 @@ export function AnnotationOverlay({
 					width: "12px",
 					height: "12px",
 					backgroundColor: isSelected ? "white" : "transparent",
-					border: isSelected ? "2px solid #34B27B" : "none",
+					border: isSelected ? handleBorder : "none",
 					borderRadius: "50%",
 					left: "-6px",
 					bottom: "-6px",
@@ -666,7 +675,7 @@ export function AnnotationOverlay({
 					width: "12px",
 					height: "12px",
 					backgroundColor: isSelected ? "white" : "transparent",
-					border: isSelected ? "2px solid #34B27B" : "none",
+					border: isSelected ? handleBorder : "none",
 					borderRadius: "50%",
 					right: "-6px",
 					bottom: "-6px",
